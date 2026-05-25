@@ -152,7 +152,9 @@ def render_masav_tab(client):
     # תמיד טעון מ-session_state כדי לקבל נתונים מעודכנים
     client_id = client["client_id"]
     fresh_client = st.session_state["clients"].get(client_id, client)
-    vendor_lookup = fresh_client.get("vendor_index") or {}
+    # נרמול ח.פ. — הסר אפסים מובילים מכל המפתחות
+    raw_lookup = fresh_client.get("vendor_index") or {}
+    vendor_lookup = {hp.lstrip("0") or hp: acc for hp, acc in raw_lookup.items()}
     bank_coa      = fresh_client.get("bank_coa", "") or client.get("bank_coa", "")
 
     if not vendor_lookup:
