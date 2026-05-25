@@ -18,7 +18,7 @@ KNOWN_COLUMNS = {
 
 INVOICE_HEADERS = [
     "תאריך", "חשבון חובה 1", "חשבון זכות 1", "חשבון זכות 2",
-    "פרטים", "אסמכתא", "לקוח-סכום חובה 1", "הכנסה-סכום זכות 1", "מעמע-סכום זכות 2",
+    "פרטים", "אסמכתא", "לקוח-סכום חובה 1", "הכנסה-סכום זכות 1", "מע\"מ-סכום זכות 2",
 ]
 RECEIPT_HEADERS = [
     "תאריך", "חשבון חובה 1", "חשבון זכות",
@@ -114,38 +114,38 @@ def convert_income_file(df: pd.DataFrame, clients_dict: dict, extra_columns: dic
         if any(c not in KNOWN_COLUMNS and c not in extra_columns for c in col_data):
             continue
 
-        # חישוב מע"מ — שימוש בסכום מהקובץ (מדויק יותר)
+        # חישוב מע"מ — מתמטיקה ב-cents שלמים למניעת שגיאות float
         taxable_cols = {k: v for k, v in col_data.items()
                         if not (KNOWN_COLUMNS.get(k, (None, None))[1] or
                                 extra_columns.get(k, {}).get("vat_exempt", False))}
-        total_taxable = sum(taxable_cols.values())
-        accum_vat = 0.0
+        total_taxable_cents = sum(round(v * 100) for v in taxable_cols.values())
+        vat_file_cents = round(vat_file * 100)
+        accum_vat_cents = 0
 
         taxable_list = list(taxable_cols.items())
         for j, (col_name, col_value) in enumerate(taxable_list):
+            col_value_cents = round(col_value * 100)
             is_last = (j == len(taxable_list) - 1)
-            if total_taxable > 0:
+            if total_taxable_cents > 0:
                 if is_last:
-                    col_vat = round(vat_file - accum_vat, 2)
+                    col_vat_cents = vat_file_cents - accum_vat_cents
                 else:
-                    col_vat = round(vat_file * col_value / total_taxable, 2)
-                    accum_vat += col_vat
+                    col_vat_cents = round(vat_file_cents * col_value_cents / total_taxable_cents)
+                    accum_vat_cents += col_vat_cents
             else:
-                col_vat = 0.0
+                col_vat_cents = 0
 
             credit_account = KNOWN_COLUMNS.get(col_name, (extra_columns.get(col_name, {}).get("account"), None))[0]
-            row_income = round(col_value, 2)
-            row_total  = round(col_value + col_vat, 2)
+            row_total_cents  = col_value_cents + col_vat_cents
+            row_income_cents = col_value_cents
 
-            # ── בדיקת איזון: חובה = זכות1 + זכות2 ──
-            diff = round(row_total - row_income - col_vat, 2)
-            if abs(diff) > 0:
-                row_income = round(row_income + diff, 2)
+            # ── איזון מובטח: row_total = row_income + col_vat (חשבון cents) ──
+            assert row_total_cents == row_income_cents + col_vat_cents
 
             invoice_rows.append([
                 txn_date_str, account, credit_account, 9001,
                 client_name, invoice_num,
-                row_total, row_income, col_vat,
+                row_total_cents / 100, row_income_cents / 100, col_vat_cents / 100,
             ])
 
         # עמודות פטורות ממע"מ
@@ -155,19 +155,20 @@ def convert_income_file(df: pd.DataFrame, clients_dict: dict, extra_columns: dic
             credit_account, is_exempt = cfg if isinstance(cfg, tuple) else (cfg["account"], cfg["vat_exempt"])
             if not is_exempt:
                 continue
-            col_value = col_data[col_name]
+            col_value_cents = round(col_data[col_name] * 100)
             invoice_rows.append([
                 txn_date_str, account, credit_account, 9001,
                 client_name, invoice_num,
-                round(col_value, 2), round(col_value, 2), 0.0,
+                col_value_cents / 100, col_value_cents / 100, 0.0,
             ])
 
         # ── קבלה ──
         if total > 0:
+            total_cents = round(total * 100)
             receipt_rows.append([
                 txn_date_str, 1200, account,
                 client_name, invoice_num,
-                total, total,
+                total_cents / 100, total_cents / 100,
             ])
 
         # ── דוח הקצאה ──
