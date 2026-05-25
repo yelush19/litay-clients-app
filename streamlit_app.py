@@ -109,9 +109,11 @@ def render_masav_tab(client):
     from utils.masav import parse_masav, build_masav_excel, fuzzy_match_vendor
     from utils.db import check_duplicates_litay, save_keys_litay, get_litay_db
 
-    vendor_lookup = client.get("vendor_index") or {}
-    bank_coa      = client.get("bank_coa", "")
-    client_id     = client["client_id"]
+    # תמיד טעון מ-session_state כדי לקבל נתונים מעודכנים
+    client_id = client["client_id"]
+    fresh_client = st.session_state["clients"].get(client_id, client)
+    vendor_lookup = fresh_client.get("vendor_index") or {}
+    bank_coa      = fresh_client.get("bank_coa", "") or client.get("bank_coa", "")
 
     if not vendor_lookup:
         st.warning("⚠️ אינדקס ספקים חסר"); return
