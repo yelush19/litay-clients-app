@@ -104,6 +104,23 @@ def workbook_to_bytes(wb):
     return buf.getvalue()
 
 
+def show_validation(report, label="✅ בדיקות תקינות"):
+    """מציג דוח אימות — חוסם הורדה אם יש שגיאות קריטיות"""
+    from utils.validation import ValidationReport
+    st.subheader(label)
+    for r in report.results:
+        icon = "✅" if r.passed else ("🚫" if r.critical else "⚠️")
+        col1, col2 = st.columns([3,2])
+        col1.markdown(f"{icon} **{r.name}** — {r.message}")
+        if not r.passed and (r.expected or r.actual):
+            col2.caption(f"צפוי: {r.expected} | בפועל: {r.actual}")
+    if not report.ok:
+        st.error("🚫 **לא ניתן להוריד — יש שגיאות קריטיות לתיקון**")
+    elif report.has_warnings:
+        st.warning("⚠️ יש אזהרות — מומלץ לבדוק לפני הורדה")
+    return report.ok
+
+
 def file_selector(client_id: str, file_type: str, label: str, 
                   file_ext: list, key: str) -> tuple:
     """
@@ -398,27 +415,50 @@ def render_payit_tab():
 
     with st.spinner("⏳ מעבד PDF..."):
         import io as _io
-        data = extract_data_from_payit_pdf(_io.BytesIO(file_bytes))
+        from utils.payit import extract_pdf_summary
+        pdf_io = _io.BytesIO(file_bytes)
+        data = extract_data_from_payit_pdf(pdf_io)
+        pdf_io.seek(0)
+        pdf_summary = extract_pdf_summary(pdf_io)
 
     if not data:
         st.error("❌ לא נמצאו נתונים בקובץ"); return
 
     df = pd.DataFrame([{
-        'שם המוטב': d['fund_name'], 'בנק': d['account'].split('-')[0] if '-' in d['account'] else '',
-        'מספר חשבון': d['account'], 'סכום (₪)': float(d['amount'])
+        'שם המוטב': d['fund_name'],
+        'בנק': d['account'].split('-')[0] if '-' in d['account'] else '',
+        'מספר חשבון': d['account'],
+        'סכום (₪)': float(d['amount'])
     } for d in data])
 
+    extracted_total = df['סכום (₪)'].sum()
+    extracted_count = len(df)
+
     c1,c2 = st.columns(2)
-    c1.metric("העברות", len(df))
-    c2.metric("סה״כ", f"₪{df['סכום (₪)'].sum():,.2f}")
+    c1.metric("העברות", extracted_count)
+    c2.metric("סה״כ", f"₪{extracted_total:,.2f}")
+
+    # ===== בדיקת אימות מול PDF =====
+    st.subheader("🔍 אימות מול PDF")
+    pdf_total = pdf_summary.get("total", 0)
+    pdf_count = pdf_summary.get("fund_count", 0)
+
+    col1, col2, col3 = st.columns(3)
+    diff = abs(extracted_total - pdf_total)
+    col1.metric("סה״כ PDF", f"₪{pdf_total:,.2f}" if pdf_total else "לא זוהה")
+    col2.metric("סה״כ מחולץ", f"₪{extracted_total:,.2f}")
+    from utils.validation import validate_payit
+    report_payit = validate_payit(data, pdf_total)
+    can_download = show_validation(report_payit)
 
     st.subheader("תצוגה מקדימה")
     st.dataframe(df, use_container_width=True, hide_index=True)
 
-    excel_data = create_mizrahi_excel(data)
-    fname = f"מזרחי_גמל_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-    st.download_button("📥 הורד Excel למזרחי", excel_data, fname,
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+    if can_download:
+        excel_data = create_mizrahi_excel(data)
+        fname = f"מזרחי_גמל_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        st.download_button("📥 הורד Excel למזרחי", excel_data, fname,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
 
 
 def render_valley_payem_tab(client):
@@ -532,15 +572,42 @@ def render_income_tab():
     st.divider()
 
     if page == "עיבוד":
-        uploaded_files = st.file_uploader("העלי קובץ הכנסות חודשי (.xlsx)",
-                                           type=["xlsx"], accept_multiple_files=True, key="income_up")
-        if not uploaded_files:
+        # בחירת קבצי הכנסות — עם שמירה ב-Storage
+        from utils.db import upload_file, list_recent_files, download_file as dl_file
+        import io as _io_inc
+
+        recent_inc = list_recent_files("rahel_mor", "income")
+        tab_inc_new, tab_inc_saved = st.tabs(["📤 העלה חדש", f"📂 שמורים ({len(recent_inc)})"])
+
+        income_files = []  # [(name, bytes)]
+
+        with tab_inc_new:
+            uploaded_files = st.file_uploader("העלי קובץ הכנסות חודשי (.xlsx)",
+                                               type=["xlsx"], accept_multiple_files=True, key="income_up")
+            if uploaded_files:
+                for uf in uploaded_files:
+                    fb = uf.read()
+                    upload_file("rahel_mor", "income", uf.name, fb)
+                    income_files.append((uf.name, fb))
+
+        with tab_inc_saved:
+            if not recent_inc:
+                st.info("אין קבצים שמורים")
+            else:
+                opts = [f["name"] for f in recent_inc]
+                sel_inc = st.multiselect("בחרי קבצים", opts, key="inc_sel")
+                if st.button("📂 טעני נבחרים", key="inc_load") and sel_inc:
+                    for sname in sel_inc:
+                        fb = dl_file("rahel_mor", "income", sname)
+                        if fb: income_files.append((sname, fb))
+
+        if not income_files:
             st.info("⬆️ העלי קובץ אחד או יותר כדי להתחיל"); return
 
-        for uploaded in uploaded_files:
-            df = pd.read_excel(uploaded, header=None)
-            month_label = detect_month_label(uploaded.name, df)
-            st.success(f"✅ **{uploaded.name}** | חודש: **{month_label}**")
+        for fname_inc, fb_inc in income_files:
+            df = pd.read_excel(_io_inc.BytesIO(fb_inc), header=None)
+            month_label = detect_month_label(fname_inc, df)
+            st.success(f"✅ **{fname_inc}** | חודש: **{month_label}**")
 
         st.divider()
         if "income_processing" not in st.session_state:
@@ -555,10 +622,10 @@ def render_income_tab():
             all_unmatched, all_unknown_cols = [], []
 
             dfs = []
-            for uploaded in uploaded_files:
-                uploaded.seek(0)
-                df = read_excel_safe(uploaded)
-                dfs.append((uploaded.name, df))
+            for fname_inc, fb_inc in income_files:
+                import io as _io_inc2
+                df = read_excel_safe(_io_inc2.BytesIO(fb_inc))
+                dfs.append((fname_inc, df))
 
             for name, df in dfs:
                 _, _, _, unmatched, unknown_cols = convert_income_file(df, clients_dict, extra_cols)
@@ -595,6 +662,7 @@ def render_income_tab():
                 clients_full = get_clients_full()
                 clients_id = {r["name"]: r.get("id_number", "") for r in clients_full}
                 all_allocation = []
+                can_dl = False  # ברירת מחדל
 
                 for fname, df in dfs:
                     month_label = detect_month_label(fname, df)
@@ -607,6 +675,10 @@ def render_income_tab():
                     c1.metric("חשבוניות", len(invoice_rows))
                     c2.metric("קבלות", len(receipt_rows))
                     c3.metric("חודש", month_label)
+
+                    from utils.validation import validate_income
+                    report_inc = validate_income(invoice_rows, receipt_rows, [], [])
+                    can_dl = show_validation(report_inc)
 
                     # תצוגה מקדימה — חשבוניות
                     st.subheader("תצוגה מקדימה — חשבוניות")
@@ -626,12 +698,13 @@ def render_income_tab():
                         st.dataframe(rec_df.head(20), use_container_width=True, hide_index=True)
 
                     excel_data = create_excel_output(invoice_rows, receipt_rows, month_label)
-                    st.download_button(
-                        label=f"⬇️ הורד ייבוא — {month_label}",
-                        data=excel_data,
-                        file_name=f"Hashavshevet_{month_label.replace('.', '_')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True, type="primary", key=f"dl_{month_label}")
+                    if can_dl:
+                        st.download_button(
+                            label=f"⬇️ הורד ייבוא — {month_label}",
+                            data=excel_data,
+                            file_name=f"Hashavshevet_{month_label.replace('.', '_')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True, type="primary", key=f"dl_{month_label}")
 
                 if all_allocation:
                     st.divider()
@@ -792,14 +865,34 @@ def main():
                         st.error(f"שגיאה: {e}")
 
         elif selected_id == "rahel_mor":
-            # ── אינדקס לקוחות ──
+            # ── אינדקס לקוחות עם שמירה ב-Storage ──
             st.caption("👥 אינדקס לקוחות (מחשבשבת)")
-            idx_file = st.file_uploader("העלי XLSX לקוחות", type=["xlsx"], key="idx_clients")
-            if idx_file:
-                from utils.db import read_excel_safe, import_clients_from_df
+            from utils.db import read_excel_safe, import_clients_from_df, upload_file, list_recent_files, download_file
+
+            recent_idx = list_recent_files("rahel_mor", "client_index")
+            tab_new_r, tab_saved_r = st.tabs(["📤 העלה חדש", f"📂 שמורים ({len(recent_idx)})"])
+
+            idx_bytes_r = None
+            with tab_new_r:
+                idx_file = st.file_uploader("XLSX מחשבשבת", type=["xlsx"], key="idx_clients")
+                if idx_file:
+                    idx_bytes_r = idx_file.read()
+                    upload_file("rahel_mor", "client_index", idx_file.name, idx_bytes_r)
+
+            with tab_saved_r:
+                if not recent_idx:
+                    st.info("אין אינדקסים שמורים")
+                elif idx_bytes_r is None:
+                    opts = {f["name"]: f for f in recent_idx}
+                    sel_r = st.selectbox("בחרי", list(opts.keys()), key="idx_sel_r")
+                    if st.button("📂 טעני", key="idx_load_r"):
+                        idx_bytes_r = download_file("rahel_mor", "client_index", sel_r)
+
+            if idx_bytes_r:
                 try:
-                    df = read_excel_safe(idx_file)
-                    count, err = import_clients_from_df(df)
+                    import io as _io2
+                    df_idx = read_excel_safe(_io2.BytesIO(idx_bytes_r))
+                    count, err = import_clients_from_df(df_idx)
                     if err and count == 0: st.error(f"❌ {err}")
                     elif err: st.warning(f"⚠️ {err}")
                     else: st.success(f"✅ {count} לקוחות יובאו!")
