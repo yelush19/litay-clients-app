@@ -9,6 +9,68 @@ from openpyxl.utils import get_column_letter, quote_sheetname
 GREEN = '4CAF50'
 BLUE  = '1565C0'
 
+# ===== HELPERS =====
+def clean_description(bai_desc, detail):
+    c = re.sub(r"^20\d{11,}\s*","",detail or "")
+    c = re.sub(r"\d{10,}","",c)
+    c = re.sub(r"\b\d{6}\b","",c)
+    c = re.sub(r"ST-?[A-Z0-9]{10,}","",c)
+    c = re.sub(r"\d{2}/\d{2}/\d{2}","",c)
+    c = re.sub(r"\s+"," ",c).strip()[:40]
+    return c if len(c)>=3 else bai_desc
+
+def parse_amount(s):
+    c = re.sub(r"[\$,\s]","",str(s or ""))
+    c = re.sub(r"[()]","",c)
+    try: return abs(float(c))
+    except: return 0.0
+
+def parse_net_amount(s):
+    c = re.sub(r"[\$,\s]","",str(s or ""))
+    neg = "(" in c
+    c = re.sub(r"[()]","",c)
+    try: v = float(c)
+    except: v = 0.0
+    return -v if neg else v
+
+def format_date(dt):
+    return f"{dt.day:02d}/{dt.month:02d}/{dt.year}"
+
+def parse_valley_date(s):
+    parts = str(s or "").split("/")
+    if len(parts)!=3: return None
+    try: return datetime(int(parts[2]),int(parts[0]),int(parts[1]))
+    except: return None
+
+def parse_payem_date(s):
+    parts = str(s or "").split("-")
+    if len(parts)!=3: return None
+    try: return datetime(int(parts[0]),int(parts[1]),int(parts[2]))
+    except: return None
+
+def detect_file_type(rows):
+    if not rows or len(rows)<2: return "unknown"
+    r0=[str(c or "") for c in rows[0]]
+    r1=[str(c or "") for c in rows[1]]
+    if any("Valley" in c for c in r0): return "valley"
+    if any("PayEm" in c for c in r0): return "payem"
+    if r1 and r1[0].startswith("Bank"): return "valley"
+    if len(r1)>=3 and r1[0]=="Date" and r1[1]=="Time" and r1[2]=="Status": return "payem"
+    return "unknown"
+
+def _format_text_col(ws,col,min_row,max_row):
+    for row in ws.iter_rows(min_row=min_row,max_row=max_row,min_col=col,max_col=col):
+        for cell in row:
+            if cell.value is not None:
+                cell.value=str(cell.value)
+                cell.number_format='@'
+
+def _add_named_range(wb,name,ws_title,min_col,min_row,max_col,max_row):
+    ref=f"{quote_sheetname(ws_title)}!${get_column_letter(min_col)}${min_row}:${get_column_letter(max_col)}${max_row}"
+    wb.defined_names.add(DefinedName(name,attr_text=ref))
+
+
+
 # ===== VALLEY PARSER + BUILDER =====
 def parse_valley(rows, coa_lookup, cat_coa):
     results=[]
