@@ -589,7 +589,9 @@ def render_income_tab():
                 loaded = []
                 for uf in uploaded_files:
                     fb = uf.read()
-                    upload_file("rahel_mor", "income", uf.name, fb)
+                    result = upload_file("rahel_mor", "income", uf.name, fb)
+                    if result and result.startswith("ERROR:"):
+                        st.warning(f"⚠️ שמירה ל-Storage נכשלה: {result[6:]} — עובד בזיכרון בלבד")
                     loaded.append((uf.name, fb))
                 st.session_state[_inc_key] = loaded
 

@@ -172,18 +172,26 @@ def upload_file(client_id: str, file_type: str, filename: str, file_bytes: bytes
     import re
     safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
     path = f"{client_id}/{file_type}/{safe_name}"
+    sb = get_litay_db()
+    # נסה למחוק קיים
     try:
-        sb = get_litay_db()
-        # מחק קיים אם יש
         sb.storage.from_("uploads").remove([path])
     except:
         pass
+    # העלה
     try:
-        sb = get_litay_db()
-        sb.storage.from_("uploads").upload(path, file_bytes)
+        sb.storage.from_("uploads").upload(
+            path, file_bytes,
+            {"content-type": "application/octet-stream", "upsert": "true"}
+        )
         return path
     except Exception as e:
-        return ""
+        # נסה עם upsert כ-query param
+        try:
+            sb.storage.from_("uploads").upload(path, file_bytes)
+            return path
+        except Exception as e2:
+            return f"ERROR:{e2}"
 
 
 def list_recent_files(client_id: str, file_type: str) -> list:
