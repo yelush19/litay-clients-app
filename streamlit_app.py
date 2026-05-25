@@ -678,49 +678,66 @@ def render_income_tab():
                 clients_id = {r["name"]: r.get("id_number", "") for r in clients_full}
                 all_allocation = []
                 alloc_months = []
-                can_dl = False  # ברירת מחדל
+                all_invoices = []
+                all_receipts = []
+                all_months = []
+                can_dl = True
+
+                from utils.validation import validate_income
 
                 for fname, df in dfs:
                     month_label = detect_month_label(fname, df)
                     invoice_rows, receipt_rows, allocation_rows, _, _ = convert_income_file(
                         df, clients_dict, extra_cols, clients_id)
                     all_allocation.extend(allocation_rows)
+                    all_invoices.extend(invoice_rows)
+                    all_receipts.extend(receipt_rows)
                     if allocation_rows and month_label not in alloc_months:
                         alloc_months.append(month_label)
+                    if month_label not in all_months:
+                        all_months.append(month_label)
 
+                    # מטריקות לכל קובץ
                     st.divider()
                     c1,c2,c3 = st.columns(3)
                     c1.metric("חשבוניות", len(invoice_rows))
                     c2.metric("קבלות", len(receipt_rows))
                     c3.metric("חודש", month_label)
 
-                    from utils.validation import validate_income
                     report_inc = validate_income(invoice_rows, receipt_rows, [], [])
-                    can_dl = show_validation(report_inc)
+                    can_dl_this = show_validation(report_inc)
+                    can_dl = can_dl and can_dl_this
 
-                    # תצוגה מקדימה — חשבוניות
-                    st.subheader("תצוגה מקדימה — חשבוניות")
-                    if invoice_rows:
-                        inv_df = pd.DataFrame(invoice_rows, columns=[
-                            "תאריך","ח.חובה","ח.זכות1","ח.זכות2",
-                            "פרטים","אסמכתא","סכום חובה","סכום זכות","מעמ"])
-                        st.dataframe(inv_df.head(20), use_container_width=True, hide_index=True)
+                # ── קובץ פלט אחד מאוחד לכל התקופות ──
+                st.divider()
+                months_label = " | ".join(all_months) if all_months else "חדש"
+                st.subheader(f"📦 קובץ ייבוא מאוחד — {months_label}")
 
-                    # תצוגה מקדימה — קבלות
-                    st.subheader("תצוגה מקדימה — קבלות")
-                    if receipt_rows:
-                        rec_df = pd.DataFrame(receipt_rows, columns=[
-                            "תאריך","ח.חובה","ח.זכות","פרטים","אסמכתא","סכום בנק","סכום לקוח"])
-                        st.dataframe(rec_df.head(20), use_container_width=True, hide_index=True)
+                if all_invoices:
+                    st.markdown("**תצוגה מקדימה — חשבוניות (כל התקופות)**")
+                    inv_df = pd.DataFrame(all_invoices, columns=[
+                        "תאריך","ח.חובה","ח.זכות1","ח.זכות2",
+                        "פרטים","אסמכתא","סכום חובה","סכום זכות","מע\"מ"])
+                    st.dataframe(inv_df.head(20), use_container_width=True, hide_index=True)
 
-                    excel_data = create_excel_output(invoice_rows, receipt_rows, month_label)
-                    if can_dl:
-                        st.download_button(
-                            label=f"⬇️ הורד ייבוא — {month_label}",
-                            data=excel_data,
-                            file_name=f"Hashavshevet_{month_label.replace('.', '_')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True, type="primary", key=f"dl_{month_label}")
+                if all_receipts:
+                    st.markdown("**תצוגה מקדימה — קבלות (כל התקופות)**")
+                    rec_df = pd.DataFrame(all_receipts, columns=[
+                        "תאריך","ח.חובה","ח.זכות","פרטים","אסמכתא","סכום בנק","סכום לקוח"])
+                    st.dataframe(rec_df.head(20), use_container_width=True, hide_index=True)
+
+                months_filename = "_".join(m.replace('.', '_') for m in all_months) if all_months else "חדש"
+                sheet_label = "_".join(all_months) if all_months else "חדש"
+                if len(sheet_label) > 25:
+                    sheet_label = f"{all_months[0]}-{all_months[-1]}"
+                excel_data = create_excel_output(all_invoices, all_receipts, sheet_label)
+                if can_dl:
+                    st.download_button(
+                        label=f"⬇️ הורד ייבוא מאוחד — {months_label}",
+                        data=excel_data,
+                        file_name=f"Hashavshevet_{months_filename}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True, type="primary", key="dl_unified")
 
                 if all_allocation:
                     st.toast(f"📋 יש דוח הקצאה להורדה — {len(all_allocation)} חשבוניות", icon="⚠️")
