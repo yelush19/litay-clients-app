@@ -554,7 +554,6 @@ def render_valley_payem_tab(client):
 
 
 def render_income_tab():
-    import io as _pyio
     from utils.db import (get_all_clients, get_clients_full, add_client,
                            get_next_account_number, import_clients_from_df,
                            get_account_columns, add_account_column, read_excel_safe,
@@ -616,7 +615,7 @@ def render_income_tab():
             st.info("⬆️ העלי קובץ אחד או יותר כדי להתחיל"); return
 
         for fname_inc, fb_inc in income_files:
-            df = pd.read_excel(_pyio.BytesIO(fb_inc), header=None)
+            df = pd.read_excel(io.BytesIO(fb_inc), header=None)
             month_label = detect_month_label(fname_inc, df)
             st.success(f"✅ **{fname_inc}** | חודש: **{month_label}**")
 
