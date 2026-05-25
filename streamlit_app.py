@@ -168,7 +168,10 @@ def render_masav_tab(client):
     # נרמול ח.פ. — הסר אפסים מובילים מכל המפתחות
     raw_lookup = fresh_client.get("vendor_index") or {}
     vendor_lookup = {hp.lstrip("0") or hp: acc for hp, acc in raw_lookup.items()}
-    bank_coa      = fresh_client.get("bank_coa", "") or client.get("bank_coa", "")
+    # הוסף מיפויים מקומיים (נשמרו בsession לפני Supabase)
+    local_extra = st.session_state.get(f"_local_vendor_{client_id}", {})
+    vendor_lookup.update(local_extra)
+    bank_coa = fresh_client.get("bank_coa", "") or client.get("bank_coa", "")
 
     if not vendor_lookup:
         st.warning("⚠️ אינדקס ספקים חסר"); return
@@ -229,22 +232,32 @@ def render_masav_tab(client):
                 except: pass
 
         def _do_save(mappings: dict):
-            """פונקציית שמירה פנימית — שומרת dict של {hp: account} ל-Supabase"""
-            fresh = st.session_state["clients"].get(client_id, client)
-            raw = fresh.get("vendor_index") or {}
-            vl  = {k.lstrip("0") or k: v for k, v in raw.items()}
-            updated = {**vl, **mappings}
+            """שמור מיפויים — מיד ב-session_state + Supabase ברקע"""
+            # 1. שמור מיד ב-session_state (מהיר, ללא roundtrip)
+            local_key = f"_local_vendor_{client_id}"
+            local = st.session_state.get(local_key, {})
+            local.update(mappings)
+            st.session_state[local_key] = local
+
+            # 2. נקה cache שורות כדי לעבד מחדש
+            st.session_state.pop(f"masav_rows_{client_id}", None)
+
+            # 3. שמור ל-Supabase ברקע (לא מחכים לתוצאה לפני rerun)
             try:
+                fresh = st.session_state["clients"].get(client_id, client)
+                raw = fresh.get("vendor_index") or {}
+                vl  = {k.lstrip("0") or k: v for k, v in raw.items()}
+                updated = {**vl, **local}
                 get_litay_db().table("client_config") \
                     .update({"vendor_index": updated}) \
                     .eq("client_id", client_id).execute()
-                from utils.db import load_clients_litay
-                st.session_state["clients"] = load_clients_litay()
-                st.session_state.pop(f"masav_rows_{client_id}", None)
-                st.session_state[f"masav_rows_{client_id}_fresh"] = True
-                st.rerun()
+                # עדכן session עם הנתונים החדשים
+                if client_id in st.session_state["clients"]:
+                    st.session_state["clients"][client_id]["vendor_index"] = updated
             except Exception as e:
-                st.error(f"שגיאה: {e}")
+                st.warning(f"שמור מקומית אבל שגיאה ב-DB: {e}")
+
+            st.rerun()
 
         def save_mapping(hp_key, account_val):
             _do_save({hp_key: account_val})
