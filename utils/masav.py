@@ -135,52 +135,13 @@ def build_masav_excel(rows, batches):
             ws.cell(r, 7).fill = PatternFill(
                 start_color='FFF9C4', end_color='FFF9C4', fill_type='solid')
 
-    # Named Range — רק שורות נתונים (ללא סיכומים)
+    # Named Range — A2 עד שורה אחרונה (ללא כותרת, ללא סיכומים)
     last_data_row = ws.max_row
     if rows:
-        ref = f"{quote_sheetname('MASAV')}!$A${data_start_row}:$J${last_data_row}"
+        ref = f"{quote_sheetname('MASAV')}!$A$2:$J${last_data_row}"
         wb.defined_names.add(DefinedName('MASAV', attr_text=ref))
 
-    # ===== סיכומים — מתחת ל-Named Range =====
-    current_batch = None
-    batch_start   = data_start_row
-
-    # חישוב סיכומי batch מהנתונים
-    batch_totals = {}
-    row_num = data_start_row
-    for t in rows:
-        b = str(t['batch'])
-        if b not in batch_totals:
-            batch_totals[b] = {'start': row_num, 'end': row_num}
-        else:
-            batch_totals[b]['end'] = row_num
-        row_num += 1
-
-    # שורות סיכום batch
-    for b, info in batch_totals.items():
-        s, e = info['start'], info['end']
-        ws.append(['', f'סך הכל batch {b}',
-                   f'=SUM(C{s}:C{e})', f'=SUM(D{s}:D{e})',
-                   '', '', '', '', '', ''])
-        r = ws.max_row
-        for c in (3, 4): ws.cell(r, c).number_format = '#,##0.00'
-        sf = Font(bold=True)
-        sfill = PatternFill(start_color='E8F5E9', end_color='E8F5E9', fill_type='solid')
-        for c in range(1, 11):
-            ws.cell(r, c).font  = sf
-            ws.cell(r, c).fill  = sfill
-
-    # שורת סיכום כולל
     total = sum(t['amount'] for t in rows)
-    tr = ws.max_row + 1
-    ws.append(['', 'סה״כ כולל', total, total, '', '', '', '', '', ''])
-    for c in (3, 4): ws.cell(tr, c).number_format = '#,##0.00'
-    tf    = Font(bold=True, color='FFFFFF')
-    tfill = PatternFill(start_color=BLUE, end_color=BLUE, fill_type='solid')
-    for c in range(1, 11):
-        ws.cell(tr, c).font = tf
-        ws.cell(tr, c).fill = tfill
-
     no_coa = sum(1 for r in rows if not r['vendor_coa'])
     return wb, {
         'total_rows':   len(rows),
