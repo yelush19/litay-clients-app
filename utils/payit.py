@@ -12,6 +12,41 @@ def parse_bank_account(account_str):
     return '', '', account_str
 
 
+def extract_pdf_summary(pdf_file) -> dict:
+    """חולץ נתוני סיכום מה-PDF לאימות"""
+    import re
+    summary = {"total": 0.0, "fund_count": 0, "funds": []}
+    try:
+        with pdfplumber.open(pdf_file) as pdf:
+            all_text = ""
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    all_text += text + "\n"
+
+        # חלץ סה"כ לסליקה
+        total_match = re.search(r'(\d{1,3}(?:,\d{3})*\.\d{2})\s*(?:00\s*)?(?:\d{1,3}(?:,\d{3})*\.\d{2}\s*){1,2}\s*(?:0\.00\s*)?$',
+                                all_text, re.MULTILINE)
+        # חפש בשורת סיכום
+        lines = all_text.split('\n')
+        for line in lines:
+            amounts = re.findall(r'(\d{1,3}(?:,\d{3})*\.\d{2})', line)
+            if amounts and len(amounts) >= 3:
+                try:
+                    total = float(amounts[0].replace(',',''))
+                    if 1000 < total < 10000000:
+                        summary["total"] = total
+                except: pass
+
+        # ספור שורות עם חשבון בנק
+        accounts = re.findall(r'\d{2}-\d{3}-\d+', all_text)
+        summary["fund_count"] = len(set(accounts))
+        summary["funds"] = list(set(accounts))
+    except Exception as e:
+        summary["error"] = str(e)
+    return summary
+
+
 def extract_data_from_payit_pdf(pdf_file):
     data = []
     fund_names = {}
