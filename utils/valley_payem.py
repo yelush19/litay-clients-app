@@ -6,8 +6,8 @@ from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.utils import get_column_letter, quote_sheetname
 
-GREEN = '4CAF50'
-BLUE  = '1565C0'
+GREEN = "4CAF50"
+BLUE  = "1565C0"
 
 # ===== HELPERS =====
 def clean_description(bai_desc, detail):
@@ -58,6 +58,12 @@ def detect_file_type(rows):
     if len(r1)>=3 and r1[0]=="Date" and r1[1]=="Time" and r1[2]=="Status": return "payem"
     return "unknown"
 
+def workbook_to_bytes(wb):
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
 def _format_text_col(ws,col,min_row,max_row):
     for row in ws.iter_rows(min_row=min_row,max_row=max_row,min_col=col,max_col=col):
         for cell in row:
@@ -69,7 +75,8 @@ def _add_named_range(wb,name,ws_title,min_col,min_row,max_col,max_row):
     ref=f"{quote_sheetname(ws_title)}!${get_column_letter(min_col)}${min_row}:${get_column_letter(max_col)}${max_row}"
     wb.defined_names.add(DefinedName(name,attr_text=ref))
 
-
+GREEN = "4CAF50"
+BLUE  = "1565C0"
 
 # ===== VALLEY PARSER + BUILDER =====
 def parse_valley(rows, coa_lookup, cat_coa):
