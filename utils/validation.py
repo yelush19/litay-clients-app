@@ -254,23 +254,28 @@ def validate_income(invoice_rows: list, receipt_rows: list,
         message="חסרות קבלות" if not receipt_rows else "✅",
     )
 
-    # 5. בדיקת איזון חובה=זכות לכל פקודה
+    # 5. בדיקת איזון חובה=זכות לכל פקודה — דיוק מוחלט (cents)
     bad_balance = 0
-    for row in invoice_rows:
+    bad_examples = []
+    for idx, row in enumerate(invoice_rows, start=1):
         if len(row) >= 9:
-            debit = row[6]
-            credit1 = row[7]
-            vat = row[8]
             try:
-                if abs(float(debit) - float(credit1) - float(vat)) > 0.01:
+                debit_c   = round(float(row[6]) * 100)
+                credit1_c = round(float(row[7]) * 100)
+                vat_c     = round(float(row[8]) * 100)
+                if debit_c != credit1_c + vat_c:
                     bad_balance += 1
-            except:
-                pass
+                    if len(bad_examples) < 3:
+                        diff = (debit_c - credit1_c - vat_c) / 100
+                        bad_examples.append(f"שורה {idx}: הפרש ₪{diff:,.2f}")
+            except Exception:
+                bad_balance += 1
     report.add(
-        "איזון חובה=זכות",
+        "איזון חובה=זכות (דיוק מוחלט)",
         passed=bad_balance == 0,
         critical=True,
-        message=f"{bad_balance} פקודות לא מאוזנות" if bad_balance else "✅",
+        message=f"{bad_balance} פקודות לא מאוזנות — חשבשבת ידחה את הקובץ" if bad_balance else "✅ כל הפקודות מאוזנות לאגורה",
+        actual=" | ".join(bad_examples) if bad_examples else "✅",
     )
 
     return report
