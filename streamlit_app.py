@@ -613,8 +613,9 @@ def render_income_tab():
         if not income_files:
             st.info("⬆️ העלי קובץ אחד או יותר כדי להתחיל"); return
 
+        import io as _io_inc_r
         for fname_inc, fb_inc in income_files:
-            df = pd.read_excel(_io_inc.BytesIO(fb_inc), header=None)
+            df = pd.read_excel(_io_inc_r.BytesIO(fb_inc), header=None)
             month_label = detect_month_label(fname_inc, df)
             st.success(f"✅ **{fname_inc}** | חודש: **{month_label}**")
 
@@ -637,8 +638,7 @@ def render_income_tab():
 
             dfs = []
             import io as _io_inc2
-            _inc_key2 = "_income_files_rahel"
-            for fname_inc, fb_inc in st.session_state.get(_inc_key2, income_files):
+            for fname_inc, fb_inc in income_files:
                 df = read_excel_safe(_io_inc2.BytesIO(fb_inc))
                 dfs.append((fname_inc, df))
 
