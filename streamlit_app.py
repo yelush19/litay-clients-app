@@ -560,6 +560,8 @@ def main():
                         st.success(f"✅ {len(lookup):,} ספקים עודכנו!")
                         from utils.db import load_clients_litay
                         st.session_state["clients"] = load_clients_litay()
+                        # נקה cache של MASAV לעיבוד מחדש
+                        st.session_state.pop("masav_up", None)
                         st.rerun()
                     except Exception as e:
                         st.error(f"שגיאה: {e}")
