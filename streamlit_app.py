@@ -554,9 +554,11 @@ def render_valley_payem_tab(client):
 
 
 def render_income_tab():
+    import io
     from utils.db import (get_all_clients, get_clients_full, add_client,
                            get_next_account_number, import_clients_from_df,
-                           get_account_columns, add_account_column, read_excel_safe)
+                           get_account_columns, add_account_column, read_excel_safe,
+                           upload_file, list_recent_files, download_file as dl_file)
     from utils.converter import convert_income_file, create_excel_output, create_allocation_report, detect_month_label
 
     st.markdown('<div style="text-align:center"><span class="badge badge-income">📊 ממיר הכנסות</span></div>', unsafe_allow_html=True)
@@ -574,8 +576,6 @@ def render_income_tab():
     if page == "עיבוד":
         # בחירת קבצי הכנסות — עם שמירה ב-Storage ו-session_state
         from utils.db import upload_file, list_recent_files, download_file as dl_file
-        import io as _io_inc
-
         # session key לקבצים טעונים
         _inc_key = "_income_files_rahel"
 
@@ -613,9 +613,8 @@ def render_income_tab():
         if not income_files:
             st.info("⬆️ העלי קובץ אחד או יותר כדי להתחיל"); return
 
-        import io as _io_inc_r
         for fname_inc, fb_inc in income_files:
-            df = pd.read_excel(_io_inc_r.BytesIO(fb_inc), header=None)
+            df = pd.read_excel(io.BytesIO(fb_inc), header=None)
             month_label = detect_month_label(fname_inc, df)
             st.success(f"✅ **{fname_inc}** | חודש: **{month_label}**")
 
@@ -637,9 +636,8 @@ def render_income_tab():
             all_unmatched, all_unknown_cols = [], []
 
             dfs = []
-            import io as _io_inc2
             for fname_inc, fb_inc in income_files:
-                df = read_excel_safe(_io_inc2.BytesIO(fb_inc))
+                df = read_excel_safe(io.BytesIO(fb_inc))
                 dfs.append((fname_inc, df))
 
             for name, df in dfs:
@@ -905,8 +903,7 @@ def main():
 
             if idx_bytes_r:
                 try:
-                    import io as _io2
-                    df_idx = read_excel_safe(_io2.BytesIO(idx_bytes_r))
+                    df_idx = read_excel_safe(io.BytesIO(idx_bytes_r))
                     count, err = import_clients_from_df(df_idx)
                     if err and count == 0: st.error(f"❌ {err}")
                     elif err: st.warning(f"⚠️ {err}")
