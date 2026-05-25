@@ -215,7 +215,22 @@ def render_masav_tab(client):
                                     vendor_with_names[hp_i] = {"account": acc_i, "name": name_i}
                 except: pass
 
-        new_mappings = {}
+        def save_mapping(hp_key, account_val):
+            """שמור מיפוי בודד מיד ל-Supabase"""
+            fresh = st.session_state["clients"].get(client_id, client)
+            raw = fresh.get("vendor_index") or {}
+            vl  = {k.lstrip("0") or k: v for k, v in raw.items()}
+            updated = {**vl, hp_key: account_val}
+            try:
+                get_litay_db().table("client_config") \
+                    .update({"vendor_index": updated}) \
+                    .eq("client_id", client_id).execute()
+                from utils.db import load_clients_litay
+                st.session_state["clients"] = load_clients_litay()
+                st.session_state.pop(f"masav_rows_{client_id}", None)
+                st.rerun()
+            except Exception as e:
+                st.error(f"שגיאה: {e}")
 
         for item in unmatched:
             vendor_name = item["vendor"]
@@ -225,7 +240,6 @@ def render_masav_tab(client):
             with st.container():
                 st.markdown(f"**{vendor_name}** | ח.פ: `{hp}` | סכום: ₪{amount:,.0f}")
 
-                # fuzzy match לפי שם
                 sugg_name, sugg_acc, sugg_hp, ratio = fuzzy_match_vendor(
                     vendor_name, vendor_with_names
                 )
@@ -233,51 +247,71 @@ def render_masav_tab(client):
                 col1, col2, col3 = st.columns([3, 2, 1])
 
                 if sugg_acc and ratio >= 0.7:
-                    col1.info(f"💡 אולי: **{sugg_name}** → ח\"ן {sugg_acc} ({ratio:.0%})")
-                    if col2.button(f"✅ כן", key=f"match_{hp}"):
-                        new_mappings[hp] = sugg_acc
-                        # שמור גם את ה-ח.פ. של הספק הלא מזוהה
-                        if sugg_hp and sugg_hp != hp:
-                            new_mappings[hp] = sugg_acc
+                    col1.info(f"💡 **{sugg_name}** → ח\"ן {sugg_acc} ({ratio:.0%})")
+                    if col2.button(f"✅ כן, שמור", key=f"match_{hp}", type="primary"):
+                        save_mapping(hp, sugg_acc)
 
-                manual_acc = col3.text_input("ח\"ן ידני", key=f"manual_{hp}", placeholder="לדוגמה: 1298")
-                if manual_acc.strip():
-                    new_mappings[hp] = manual_acc.strip()
-
-        if new_mappings:
-            if st.button("💾 שמור ועדכן", type="primary"):
-                updated_index = {**vendor_lookup, **new_mappings}
-                try:
-                    get_litay_db().table("client_config") \
-                        .update({"vendor_index": updated_index}) \
-                        .eq("client_id", client_id).execute()
-                    from utils.db import load_clients_litay
-                    st.session_state["clients"] = load_clients_litay()
-                    st.success(f"✅ נשמרו {len(new_mappings)} מיפויים!")
-                    st.session_state.pop("masav_up", None)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"שגיאה: {e}")
+                with col3:
+                    manual_acc = st.text_input("ח\"ן ידני", key=f"manual_{hp}", placeholder="1298")
+                    if manual_acc.strip():
+                        if st.button("💾", key=f"save_{hp}"):
+                            save_mapping(hp, manual_acc.strip())
 
         # תמיד עצור כאן — לא מאפשר הורדה עם ספקים חסרים
         return
 
-    # ===== תצוגה מקדימה =====
+    # ===== תצוגה מקדימה + מחיקת שורות =====
+    # שמור rows_data ב-session לצורך מחיקה
+    key_rows = f"masav_rows_{client_id}"
+    if key_rows not in st.session_state or st.session_state.get(f"{key_rows}_fresh"):
+        st.session_state[key_rows] = rows_data
+        st.session_state[f"{key_rows}_fresh"] = False
+
+    current_rows = st.session_state[key_rows]
+
     c1,c2,c3,c4 = st.columns(4)
-    c1.metric("תנועות", len(rows_data))
-    c2.metric("סה״כ", f"₪{sum(r['amount'] for r in rows_data):,.0f}")
+    c1.metric("תנועות", len(current_rows))
+    c2.metric("סה״כ", f"₪{sum(r['amount'] for r in current_rows):,.0f}")
     c3.metric("Batches", len(batches))
-    c4.metric("✅ ח\"ן", f"{len(rows_data)}/{len(rows_data)}")
+    c4.metric("✅ ח\"ן", f"{len(current_rows)}/{len(current_rows)}")
 
     st.subheader("תצוגה מקדימה")
+
+    # בחירת שורות למחיקה
+    with st.expander("🗑️ מחיקת שורות (אופציונלי)"):
+        st.caption("סמני שורות למחיקה לפני הורדה")
+        to_delete = []
+        for i, r in enumerate(current_rows):
+            checked = st.checkbox(
+                f"{r['date_fmt']} | {r['vendor']} | ₪{r['amount']:,.0f} | Batch {r['batch']}",
+                key=f"del_{client_id}_{i}"
+            )
+            if checked:
+                to_delete.append(i)
+
+        if to_delete:
+            st.warning(f"⚠️ {len(to_delete)} שורות מסומנות למחיקה")
+            if st.button("🗑️ מחק שורות מסומנות", type="secondary", key="confirm_delete"):
+                if st.session_state.get("delete_confirmed"):
+                    st.session_state[key_rows] = [r for i,r in enumerate(current_rows) if i not in to_delete]
+                    st.session_state["delete_confirmed"] = False
+                    for i in range(len(current_rows)):
+                        st.session_state.pop(f"del_{client_id}_{i}", None)
+                    st.success(f"✅ {len(to_delete)} שורות נמחקו")
+                    st.rerun()
+                else:
+                    st.session_state["delete_confirmed"] = True
+                    st.error(f"❗ בטוחה? לחצי שוב למחיקת {len(to_delete)} שורות")
+
+    current_rows = st.session_state[key_rows]
     prev = [{'תאריך':r['date_fmt'],'תיאור':r['vendor'],'סכום':r['amount'],
              'ח"ן חובה':r['vendor_coa'] or '⚠️','ח"ן זכות':r['bank_coa'],'Batch':r['batch']}
-            for r in rows_data[:50]]
+            for r in current_rows[:50]]
     st.dataframe(pd.DataFrame(prev), use_container_width=True, hide_index=True)
 
     st.divider()
     with st.spinner("⏳ בונה Excel..."):
-        wb, checks = build_masav_excel(rows_data, batches)
+        wb, checks = build_masav_excel(current_rows, batches)
     today = datetime.now()
     fname = f"MASAV_{client_id}_{today.day}_{today.month}_{today.year}.xlsx"
 
@@ -287,7 +321,7 @@ def render_masav_tab(client):
     cols[1].metric("סה״כ", f"₪{checks['total_amount']:,.2f}")
     cols[2].metric("✅ ח\"ן", f"{checks['coa_covered']}/{checks['total_rows']}")
 
-    st.download_button(f"📥 הורד MASAV Excel ({len(rows_data)} ספקים)",
+    st.download_button(f"📥 הורד MASAV Excel ({len(current_rows)} ספקים)",
         workbook_to_bytes(wb), fname,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
 
