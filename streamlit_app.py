@@ -181,11 +181,39 @@ def render_masav_tab(client):
     if unmatched:
         st.error(f"⚠️ {len(unmatched)} ספקים ללא ח\"ן — יש למלא לפני הורדה")
 
-        # בנה vendor index עם שמות לצורך fuzzy match
-        vendor_with_names = {
-            hp: {"account": acc, "name": ""}
-            for hp, acc in vendor_lookup.items()
-        }
+        # טען שמות מהאינדקס לצורך fuzzy match
+        from utils.db import list_recent_files, download_file
+        from utils.masav import read_vendor_index_xlsx
+        vendor_with_names = {}
+        recent_idx = list_recent_files(client_id, "vendor_index")
+        if recent_idx:
+            idx_bytes = download_file(client_id, "vendor_index", recent_idx[0]["name"])
+            if idx_bytes:
+                import zipfile as _zf, xml.etree.ElementTree as _ET, io as _io
+                try:
+                    with _zf.ZipFile(_io.BytesIO(idx_bytes)) as z:
+                        shared = []
+                        ns = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+                        if 'xl/sharedStrings.xml' in z.namelist():
+                            for si in _ET.parse(z.open('xl/sharedStrings.xml')).getroot():
+                                parts = si.findall(f'.//{ns}t')
+                                shared.append(''.join(p.text or '' for p in parts))
+                        sheet = _ET.parse(z.open('xl/worksheets/sheet.xml'))
+                        for row in sheet.getroot().findall(f'.//{ns}row'):
+                            cells = {}
+                            for c in row.findall(f'{ns}c'):
+                                col = ''.join(filter(str.isalpha, c.get('r','')))
+                                t = c.get('t',''); v = c.find(f'{ns}v')
+                                val = v.text if v is not None else ''
+                                if t == 's' and val: val = shared[int(val)]
+                                cells[col] = val
+                            if cells.get('E') == '300' and cells.get('F') not in ('','300','מפתח חשבון'):
+                                hp_i = (cells.get('I','') or '').strip().lstrip('0')
+                                acc_i = cells.get('F','').strip()
+                                name_i = cells.get('G','').strip()
+                                if hp_i and acc_i and acc_i.isdigit() and len(acc_i) <= 7:
+                                    vendor_with_names[hp_i] = {"account": acc_i, "name": name_i}
+                except: pass
 
         new_mappings = {}
 
@@ -197,7 +225,7 @@ def render_masav_tab(client):
             with st.container():
                 st.markdown(f"**{vendor_name}** | ח.פ: `{hp}` | סכום: ₪{amount:,.0f}")
 
-                # fuzzy match מול האינדקס
+                # fuzzy match לפי שם
                 sugg_name, sugg_acc, sugg_hp, ratio = fuzzy_match_vendor(
                     vendor_name, vendor_with_names
                 )
@@ -206,26 +234,33 @@ def render_masav_tab(client):
 
                 if sugg_acc and ratio >= 0.7:
                     col1.info(f"💡 אולי: **{sugg_name}** → ח\"ן {sugg_acc} ({ratio:.0%})")
-                    if col2.button(f"✅ כן, זה אותו ספק", key=f"match_{hp}"):
+                    if col2.button(f"✅ כן", key=f"match_{hp}"):
                         new_mappings[hp] = sugg_acc
+                        # שמור גם את ה-ח.פ. של הספק הלא מזוהה
+                        if sugg_hp and sugg_hp != hp:
+                            new_mappings[hp] = sugg_acc
 
                 manual_acc = col3.text_input("ח\"ן ידני", key=f"manual_{hp}", placeholder="לדוגמה: 1298")
                 if manual_acc.strip():
                     new_mappings[hp] = manual_acc.strip()
 
         if new_mappings:
-            if st.button("💾 שמור מיפויים חדשים ועדכן", type="primary"):
-                # עדכן vendor_index ב-Supabase
+            if st.button("💾 שמור ועדכן", type="primary"):
                 updated_index = {**vendor_lookup, **new_mappings}
                 try:
                     get_litay_db().table("client_config") \
                         .update({"vendor_index": updated_index}) \
                         .eq("client_id", client_id).execute()
-                    st.success(f"✅ נשמרו {len(new_mappings)} מיפויים חדשים!")
+                    from utils.db import load_clients_litay
+                    st.session_state["clients"] = load_clients_litay()
+                    st.success(f"✅ נשמרו {len(new_mappings)} מיפויים!")
+                    st.session_state.pop("masav_up", None)
                     st.rerun()
                 except Exception as e:
                     st.error(f"שגיאה: {e}")
-            return  # לא מאפשר הורדה עד שהכל מלא
+
+        # תמיד עצור כאן — לא מאפשר הורדה עם ספקים חסרים
+        return
 
     # ===== תצוגה מקדימה =====
     c1,c2,c3,c4 = st.columns(4)
