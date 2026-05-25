@@ -592,16 +592,40 @@ def main():
         if selected_id == "dmwa":
             # ── אינדקס ספקים ──
             st.caption("📋 אינדקס ספקים (מחשבשבת)")
-            idx_file = st.file_uploader("העלי XLSX ספקים", type=["xlsx"], key="idx_vendors")
-            if idx_file:
-                from utils.masav import read_vendor_index_xlsx
-                with st.spinner("קורא..."):
-                    lookup, errs = read_vendor_index_xlsx(idx_file.read())
+            from utils.db import upload_file, list_recent_files, download_file
+            from utils.masav import read_vendor_index_xlsx
+
+            recent_idx = list_recent_files(selected_id, "vendor_index")
+            tab_new, tab_saved = st.tabs(["📤 העלה חדש", f"📂 שמורים ({len(recent_idx)})"])
+
+            idx_bytes = None
+            idx_name  = None
+
+            with tab_new:
+                idx_file = st.file_uploader("XLSX מחשבשבת", type=["xlsx"], key="idx_vendors")
+                if idx_file:
+                    idx_bytes = idx_file.read()
+                    idx_name  = idx_file.name
+                    upload_file(selected_id, "vendor_index", idx_name, idx_bytes)
+
+            with tab_saved:
+                if not recent_idx:
+                    st.info("אין אינדקסים שמורים")
+                elif idx_bytes is None:
+                    opts = {f["name"]: f for f in recent_idx}
+                    sel  = st.selectbox("בחרי אינדקס", list(opts.keys()), key="idx_sel")
+                    if st.button("📂 טעני", key="idx_load"):
+                        idx_bytes = download_file(selected_id, "vendor_index", sel)
+                        idx_name  = sel
+
+            if idx_bytes:
+                with st.spinner("קורא אינדקס..."):
+                    lookup, errs = read_vendor_index_xlsx(idx_bytes)
                 if errs:
                     for e in errs: st.error(e)
                 elif lookup:
                     existing = clients.get(selected_id, {}).get("vendor_index") or {}
-                    merged = {**existing, **lookup}
+                    merged   = {**existing, **lookup}
                     try:
                         from utils.db import get_litay_db
                         get_litay_db().table("client_config") \
@@ -610,7 +634,6 @@ def main():
                         st.success(f"✅ {len(lookup):,} ספקים עודכנו!")
                         from utils.db import load_clients_litay
                         st.session_state["clients"] = load_clients_litay()
-                        # נקה cache של MASAV לעיבוד מחדש
                         st.session_state.pop("masav_up", None)
                         st.rerun()
                     except Exception as e:

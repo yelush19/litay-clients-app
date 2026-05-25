@@ -50,7 +50,9 @@ def parse_masav(file_bytes, vendor_lookup, bank_coa):
             try: amount=float(str(row[ca] or '').replace(',','').replace('₪','').strip())
             except: errors.append(f"שורה {ri}: סכום לא תקין"); continue
             hp_raw=row[chp]
-            hp=str(int(hp_raw)) if isinstance(hp_raw,float) else str(hp_raw or '').strip()
+            hp_raw_str = str(int(hp_raw)) if isinstance(hp_raw,float) else str(hp_raw or '').strip()
+            # נרמול: הסר אפסים מובילים
+            hp = hp_raw_str.lstrip('0') or hp_raw_str
             invoice=str(row[ci] or '') if ci is not None else ''
             batch=str(row[cb] or 'ללא batch') if cb is not None else 'ללא batch'
             bank_d=f"{row[cbk] or ''}-{row[cbr] or ''}-{row[cac] or ''}" if cbk is not None else ''
@@ -176,6 +178,11 @@ def read_vendor_index_xlsx(file_bytes: bytes) -> tuple:
     """
     lookup = {}
     errors = []
+
+    def norm_hp(hp: str) -> str:
+        """נרמול ח.פ. — הסר אפסים מובילים"""
+        return hp.lstrip('0') or hp
+
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
             shared = []
@@ -208,12 +215,15 @@ def read_vendor_index_xlsx(file_bytes: bytes) -> tuple:
                         val = shared[int(val)]
                     cells[col] = val
 
-                # E=קוד מיון(300), F=מפתח חשבון, I=ח.פ.
+                # E=קוד מיון(300), F=מפתח חשבון (ספרות בלבד עד 7 תווים), I=ח.פ.
                 if cells.get('E') == '300' and cells.get('F') and cells.get('F') not in ('', '300', 'מפתח חשבון'):
                     hp      = cells.get('I', '').strip()
                     account = cells.get('F', '').strip()
+                    # סנן מזהים פנימיים של חשבשבת (לא ספרות או יותר מ-7 תווים)
+                    if not account.isdigit() or len(account) > 7:
+                        continue
                     if hp and hp not in ('0', '', '999999999') and account:
-                        lookup[hp] = account
+                        lookup[norm_hp(hp)] = account
 
     except Exception as e:
         errors.append(f"שגיאה בקריאת אינדקס: {e}")
