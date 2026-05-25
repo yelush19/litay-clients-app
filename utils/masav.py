@@ -71,48 +71,123 @@ def parse_masav(file_bytes, vendor_lookup, bank_coa):
     rows.sort(key=lambda r:(r['batch'],r['date']))
     return rows,batches,errors,unmatched
 
-def build_masav_excel(rows,batches):
-    wb=Workbook(); ws=wb.active; ws.title='MASAV'
-    headers=['תאריך','תיאור','חובה','זכות','אסמכתא 1','אסמכתא 2','ח"ן חובה','ח"ן זכות','Batch','פרטי בנק ספק']
+def _clean_ref(val, max_len=9) -> str:
+    """אסמכתא — ספרות בלבד, טקסט, מקסימום 9 תווים"""
+    import re as _re
+    digits = _re.sub(r'[^0-9]', '', str(val or ''))
+    return digits[:max_len]
+
+
+def build_masav_excel(rows, batches):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'MASAV'
+
+    headers = ['תאריך','תיאור','חובה','זכות',
+               'אסמכתא 1','אסמכתא 2',
+               'ח"ן חובה','ח"ן זכות','Batch','פרטי בנק ספק']
     ws.append(headers)
-    hf=PatternFill(start_color=GREEN,end_color=GREEN,fill_type="solid")
-    hfont=Font(bold=True,color="FFFFFF")
-    for cell in ws[1]: cell.fill=hf; cell.font=hfont; cell.alignment=Alignment(horizontal="right")
-    for col,w in zip("ABCDEFGHIJ",[12,35,14,14,22,14,12,12,10,26]):
-        ws.column_dimensions[col].width=w
-    current_batch=None; batch_start=2
-    def add_summary(bkey,start):
-        end=ws.max_row
-        if end<start: return
-        ws.append(['',f'סך הכל batch {bkey}',f'=SUM(C{start}:C{end})',f'=SUM(D{start}:D{end})','','','','','',''])
-        r=ws.max_row
-        for c in (3,4): ws.cell(r,c).number_format='#,##0.00'
-        sf=Font(bold=True); sfill=PatternFill(start_color='E8F5E9',end_color='E8F5E9',fill_type='solid')
-        for c in range(1,11): ws.cell(r,c).font=sf; ws.cell(r,c).fill=sfill
+
+    hf    = PatternFill(start_color=GREEN, end_color=GREEN, fill_type="solid")
+    hfont = Font(bold=True, color="FFFFFF")
+    for cell in ws[1]:
+        cell.fill = hf
+        cell.font = hfont
+        cell.alignment = Alignment(horizontal="right")
+
+    for col, w in zip("ABCDEFGHIJ", [12,35,14,14,12,12,12,12,10,26]):
+        ws.column_dimensions[col].width = w
+
+    # ===== שורות נתונים בלבד — Named Range יכסה רק אותן =====
+    data_start_row = 2
+
     for t in rows:
-        if t['batch']!=current_batch:
-            if current_batch is not None: add_summary(current_batch,batch_start)
-            current_batch=t['batch']; batch_start=ws.max_row+1
-        ws.append([t['date_fmt'],t['vendor'],t['amount'],t['amount'],
-                   t['invoice'],t['hp'],t['vendor_coa'],t['bank_coa'],t['batch'],t['bank_detail']])
-        r=ws.max_row
-        for c in (3,4): ws.cell(r,c).number_format='#,##0.00'
-        for c in (5,6,7,8,9):
-            cell=ws.cell(r,c); cell.value=str(cell.value or ''); cell.number_format='@'
+        # תאריך — טקסט DD/MM/YYYY
+        date_val = str(t['date_fmt'])
+
+        # אסמכתאות — ספרות בלבד, מקס 9 תווים, TEXT
+        ref1 = _clean_ref(t['invoice'], 9)
+        ref2 = _clean_ref(t['hp'], 9)
+
+        ws.append([date_val, t['vendor'], t['amount'], t['amount'],
+                   ref1, ref2,
+                   str(t['vendor_coa'] or ''),
+                   str(t['bank_coa'] or ''),
+                   str(t['batch'] or ''),
+                   str(t['bank_detail'] or '')])
+
+        r = ws.max_row
+
+        # תאריך — TEXT
+        ws.cell(r, 1).number_format = '@'
+
+        # סכומים
+        for c in (3, 4):
+            ws.cell(r, c).number_format = '#,##0.00'
+
+        # אסמכתאות + ח"ן + Batch — TEXT
+        for c in (5, 6, 7, 8, 9):
+            cell = ws.cell(r, c)
+            cell.number_format = '@'
+
+        # ח"ן חובה חסר — צהוב
         if not t['vendor_coa']:
-            ws.cell(r,7).fill=PatternFill(start_color='FFF9C4',end_color='FFF9C4',fill_type='solid')
-    if current_batch is not None: add_summary(current_batch,batch_start)
-    tr=ws.max_row+1; total=sum(t['amount'] for t in rows)
-    ws.append(['','סה״כ כולל',total,total,'','','','','',''])
-    for c in (3,4): ws.cell(tr,c).number_format='#,##0.00'
-    tf=Font(bold=True,color='FFFFFF'); tfill=PatternFill(start_color=BLUE,end_color=BLUE,fill_type='solid')
-    for c in range(1,11): ws.cell(tr,c).font=tf; ws.cell(tr,c).fill=tfill
+            ws.cell(r, 7).fill = PatternFill(
+                start_color='FFF9C4', end_color='FFF9C4', fill_type='solid')
+
+    # Named Range — רק שורות נתונים (ללא סיכומים)
+    last_data_row = ws.max_row
     if rows:
-        ref=f"{quote_sheetname('MASAV')}!$A$2:$J${ws.max_row}"
-        wb.defined_names.add(DefinedName('MASAV',attr_text=ref))
-    no_coa=sum(1 for r in rows if not r['vendor_coa'])
-    return wb,{'total_rows':len(rows),'total_amount':total,
-               'no_coa':no_coa,'coa_covered':len(rows)-no_coa}
+        ref = f"{quote_sheetname('MASAV')}!$A${data_start_row}:$J${last_data_row}"
+        wb.defined_names.add(DefinedName('MASAV', attr_text=ref))
+
+    # ===== סיכומים — מתחת ל-Named Range =====
+    current_batch = None
+    batch_start   = data_start_row
+
+    # חישוב סיכומי batch מהנתונים
+    batch_totals = {}
+    row_num = data_start_row
+    for t in rows:
+        b = str(t['batch'])
+        if b not in batch_totals:
+            batch_totals[b] = {'start': row_num, 'end': row_num}
+        else:
+            batch_totals[b]['end'] = row_num
+        row_num += 1
+
+    # שורות סיכום batch
+    for b, info in batch_totals.items():
+        s, e = info['start'], info['end']
+        ws.append(['', f'סך הכל batch {b}',
+                   f'=SUM(C{s}:C{e})', f'=SUM(D{s}:D{e})',
+                   '', '', '', '', '', ''])
+        r = ws.max_row
+        for c in (3, 4): ws.cell(r, c).number_format = '#,##0.00'
+        sf = Font(bold=True)
+        sfill = PatternFill(start_color='E8F5E9', end_color='E8F5E9', fill_type='solid')
+        for c in range(1, 11):
+            ws.cell(r, c).font  = sf
+            ws.cell(r, c).fill  = sfill
+
+    # שורת סיכום כולל
+    total = sum(t['amount'] for t in rows)
+    tr = ws.max_row + 1
+    ws.append(['', 'סה״כ כולל', total, total, '', '', '', '', '', ''])
+    for c in (3, 4): ws.cell(tr, c).number_format = '#,##0.00'
+    tf    = Font(bold=True, color='FFFFFF')
+    tfill = PatternFill(start_color=BLUE, end_color=BLUE, fill_type='solid')
+    for c in range(1, 11):
+        ws.cell(tr, c).font = tf
+        ws.cell(tr, c).fill = tfill
+
+    no_coa = sum(1 for r in rows if not r['vendor_coa'])
+    return wb, {
+        'total_rows':   len(rows),
+        'total_amount': total,
+        'no_coa':       no_coa,
+        'coa_covered':  len(rows) - no_coa,
+    }
 
 # ===== FUZZY MATCH VENDORS =====
 from difflib import SequenceMatcher

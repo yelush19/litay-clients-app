@@ -88,7 +88,8 @@ def parse_valley(rows, coa_lookup, cat_coa):
         date_str=str(row[5] or "")
         type_ind=str(row[6] or "").upper()
         amount_str=str(row[7] or "")
-        cust_ref=str(row[8] or "")
+        import re as _re3
+        cust_ref = _re3.sub(r'[^0-9]', '', str(row[8] or ''))[:9]
         bai_desc=str(row[10] or "").upper()
         detail=str(row[11] or "")
         category=str(row[20] or "") if len(row)>20 else ""
@@ -170,7 +171,9 @@ def parse_payem(rows,coa_lookup,ltd_coa):
         if not dt: continue
         merchant=str(row[28] or "").strip()
         txn_id=str(row[41] or "").strip()
-        card4=str(row[35] or "").strip()
+        import re as _re2
+        _card_raw = str(row[35] or '').strip()
+        card4 = _re2.sub(r'[^0-9]', '', _card_raw)[:9]
         subsidiary=str(row[9] or "").strip()
         net_str=str(row[53] or "") if len(row)>53 else str(row[5] or "")
         net=parse_net_amount(net_str)
@@ -179,8 +182,9 @@ def parse_payem(rows,coa_lookup,ltd_coa):
         coa_key=f"{merchant}|{subsidiary}"
         coa_m=coa_lookup.get(coa_key)
         ltd_m=ltd_coa.get(merchant)
-        try: ref1=int(txn_id)
-        except: ref1=txn_id
+        # אסמכתא 1: ספרות בלבד, מקס 9 תווים, TEXT
+        import re as _re
+        ref1 = _re.sub(r'[^0-9]', '', txn_id)[:9]
         results.append({"key":txn_id,"date":dt,"date_formatted":format_date(dt),
             "description":merchant,"net_amount":net,"abs_amount":abs_amt,
             "credit_amount":abs_amt if is_cr else None,
@@ -229,7 +233,11 @@ def _add_payem_sheet(wb,data,sheet_name,mode):
             if cell.value is not None: cell.number_format='#,##0.00'
     for row in ws.iter_rows(min_row=2,min_col=dcol,max_col=dcol):
         for cell in row:
-            if isinstance(cell.value,datetime): cell.number_format='DD/MM/YYYY'
+            if isinstance(cell.value, datetime):
+                cell.value = cell.value.strftime('%d/%m/%Y')
+                cell.number_format = '@'
+            elif cell.value is not None:
+                cell.number_format = '@'
     for c in (r1c,r2c,crcol,drcol): _format_text_col(ws,c,2,ws.max_row)
     for col,w in cw.items(): ws.column_dimensions[col].width=w
     if data:
