@@ -677,6 +677,7 @@ def render_income_tab():
                 clients_full = get_clients_full()
                 clients_id = {r["name"]: r.get("id_number", "") for r in clients_full}
                 all_allocation = []
+                alloc_months = []
                 can_dl = False  # ברירת מחדל
 
                 for fname, df in dfs:
@@ -684,6 +685,8 @@ def render_income_tab():
                     invoice_rows, receipt_rows, allocation_rows, _, _ = convert_income_file(
                         df, clients_dict, extra_cols, clients_id)
                     all_allocation.extend(allocation_rows)
+                    if allocation_rows and month_label not in alloc_months:
+                        alloc_months.append(month_label)
 
                     st.divider()
                     c1,c2,c3 = st.columns(3)
@@ -720,13 +723,17 @@ def render_income_tab():
                             use_container_width=True, type="primary", key=f"dl_{month_label}")
 
                 if all_allocation:
+                    st.toast(f"📋 יש דוח הקצאה להורדה — {len(all_allocation)} חשבוניות", icon="⚠️")
                     st.divider()
-                    st.warning(f"⚠️ נמצאו **{len(all_allocation)}** חשבוניות הדורשות מספר הקצאה")
+                    st.error(f"## 📋 דוח הקצאה ממתין להורדה\n\nנמצאו **{len(all_allocation)}** חשבוניות הדורשות מספר הקצאה — יש להוריד את הדוח ולשלוח ללקוחה")
                     alloc_data = create_allocation_report(all_allocation)
-                    st.download_button("📋 הורד דוח הקצאה", data=alloc_data,
-                        file_name="דוח_הקצאה.xlsx",
+                    months_suffix = "_".join(m.replace('.', '_') for m in alloc_months) if alloc_months else ""
+                    alloc_filename = f"דוח_הקצאה_{months_suffix}.xlsx" if months_suffix else "דוח_הקצאה.xlsx"
+                    st.download_button(f"⬇️ הורד דוח הקצאה — {' | '.join(alloc_months) if alloc_months else ''}",
+                        data=alloc_data,
+                        file_name=alloc_filename,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True, key="dl_allocation")
+                        use_container_width=True, type="primary", key="dl_allocation")
 
     elif page == "הגדרות":
         st.subheader("⚙️ הגדרות")
