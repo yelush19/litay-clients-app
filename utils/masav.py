@@ -8,6 +8,17 @@ from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.utils import get_column_letter, quote_sheetname
 
 GREEN = '4CAF50'
+
+def format_date(dt):
+    return f"{dt.day:02d}/{dt.month:02d}/{dt.year}"
+
+def parse_amount(s):
+    import re
+    c = re.sub(r"[\$,\s]","",str(s or ""))
+    c = re.sub(r"[()]","",c)
+    try: return abs(float(c))
+    except: return 0.0
+
 BLUE  = '1565C0'
 
 # ===== MASAV PARSER + BUILDER =====
