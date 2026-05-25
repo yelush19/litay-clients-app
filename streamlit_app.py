@@ -210,7 +210,13 @@ def render_valley_payem_tab(client):
     f = st.file_uploader("העלי קובץ CSV", type=["csv"], key="csv_up")
     if not f: return
 
-    rows = list(csv.reader(io.StringIO(f.read().decode("utf-8"))))
+    raw = f.read()
+    for enc in ("utf-8-sig", "utf-8", "windows-1255", "latin-1"):
+        try:
+            rows = list(csv.reader(io.StringIO(raw.decode(enc))))
+            break
+        except:
+            rows = []
     ftype = detect_file_type(rows)
 
     if ftype == "valley":
