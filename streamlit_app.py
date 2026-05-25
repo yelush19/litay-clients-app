@@ -194,6 +194,11 @@ def render_masav_tab(client):
         st.error("לא נמצאו תנועות תקינות"); return
 
     # ===== טיפול בספקים חסרים =====
+    # הסר ספקים שכבר טופלו בsession
+    local_extra = st.session_state.get(f"_local_vendor_{client_id}", {})
+    unmatched = [u for u in unmatched
+                 if (u["hp"].lstrip("0") or u["hp"]) not in local_extra]
+
     if unmatched:
         st.error(f"⚠️ {len(unmatched)} ספקים ללא ח\"ן — יש למלא לפני הורדה")
 
@@ -231,39 +236,44 @@ def render_masav_tab(client):
                                     vendor_with_names[hp_i] = {"account": acc_i, "name": name_i}
                 except: pass
 
-        def _do_save(mappings: dict):
-            """שמור מיפויים — מיד ב-session_state + Supabase ברקע"""
-            # 1. שמור מיד ב-session_state (מהיר, ללא roundtrip)
+        def save_bulk(mappings: dict):
+            """
+            שמור מיפויים — עדכן rows ישירות + Supabase.
+            ללא rerun — רק עדכון מקומי.
+            """
+            if not mappings:
+                return
+
+            # 1. עדכן vendor_index בזיכרון
             local_key = f"_local_vendor_{client_id}"
             local = st.session_state.get(local_key, {})
             local.update(mappings)
             st.session_state[local_key] = local
 
-            # 2. נקה cache שורות כדי לעבד מחדש
-            st.session_state.pop(f"masav_rows_{client_id}", None)
+            # 2. עדכן rows_data בזיכרון — הוסף ח"ן לשורות שמחכות
+            rows_key = f"masav_rows_{client_id}"
+            if rows_key in st.session_state:
+                for row in st.session_state[rows_key]:
+                    hp_norm = row.get("hp","").lstrip("0") or row.get("hp","")
+                    if hp_norm in mappings and not row.get("vendor_coa"):
+                        row["vendor_coa"] = mappings[hp_norm]
 
-            # 3. שמור ל-Supabase ברקע (לא מחכים לתוצאה לפני rerun)
+            # 3. שמור ל-Supabase
             try:
                 fresh = st.session_state["clients"].get(client_id, client)
                 raw = fresh.get("vendor_index") or {}
-                vl  = {k.lstrip("0") or k: v for k, v in raw.items()}
+                vl = {k.lstrip("0") or k: v for k, v in raw.items()}
                 updated = {**vl, **local}
                 get_litay_db().table("client_config") \
                     .update({"vendor_index": updated}) \
                     .eq("client_id", client_id).execute()
-                # עדכן session עם הנתונים החדשים
                 if client_id in st.session_state["clients"]:
                     st.session_state["clients"][client_id]["vendor_index"] = updated
+                st.success(f"✅ {len(mappings)} ספקים נשמרו!")
             except Exception as e:
-                st.warning(f"שמור מקומית אבל שגיאה ב-DB: {e}")
+                st.warning(f"שמור מקומית, שגיאה ב-DB: {e}")
 
             st.rerun()
-
-        def save_mapping(hp_key, account_val):
-            _do_save({hp_key: account_val})
-
-        def save_mapping_bulk(mappings: dict):
-            _do_save(mappings)
 
         # ===== טבלת ספקים עם checkboxes =====
         pending = {}  # {hp: account} — מה שמחכה לשמירה
@@ -301,9 +311,9 @@ def render_masav_tab(client):
         col_l, col_r = st.columns([3, 1])
 
         with col_r:
-            if st.button("💾 שמור מסומנים", type="primary", 
+            if st.button("💾 שמור מסומנים", type="primary",
                          key="save_checked", disabled=not pending):
-                save_mapping_bulk(pending)
+                save_bulk(pending)
 
         with col_l:
             if pending:
