@@ -256,12 +256,19 @@ def render_valley_payem_tab(client):
     if not f: return
 
     raw = f.read()
+    rows = []
     for enc in ("utf-8-sig", "utf-8", "windows-1255", "latin-1"):
         try:
-            rows = list(csv.reader(io.StringIO(raw.decode(enc))))
-            break
+            decoded = raw.decode(enc)
+            candidate = list(csv.reader(io.StringIO(decoded)))
+            ft = detect_file_type(candidate)
+            if ft != "unknown":
+                rows = candidate
+                break
+            if not rows:
+                rows = candidate  # שמור כגיבוי
         except:
-            rows = []
+            pass
     ftype = detect_file_type(rows)
 
     if ftype == "valley":
