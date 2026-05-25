@@ -572,23 +572,26 @@ def render_income_tab():
     st.divider()
 
     if page == "עיבוד":
-        # בחירת קבצי הכנסות — עם שמירה ב-Storage
+        # בחירת קבצי הכנסות — עם שמירה ב-Storage ו-session_state
         from utils.db import upload_file, list_recent_files, download_file as dl_file
         import io as _io_inc
 
+        # session key לקבצים טעונים
+        _inc_key = "_income_files_rahel"
+
         recent_inc = list_recent_files("rahel_mor", "income")
         tab_inc_new, tab_inc_saved = st.tabs(["📤 העלה חדש", f"📂 שמורים ({len(recent_inc)})"])
-
-        income_files = []  # [(name, bytes)]
 
         with tab_inc_new:
             uploaded_files = st.file_uploader("העלי קובץ הכנסות חודשי (.xlsx)",
                                                type=["xlsx"], accept_multiple_files=True, key="income_up")
             if uploaded_files:
+                loaded = []
                 for uf in uploaded_files:
                     fb = uf.read()
                     upload_file("rahel_mor", "income", uf.name, fb)
-                    income_files.append((uf.name, fb))
+                    loaded.append((uf.name, fb))
+                st.session_state[_inc_key] = loaded
 
         with tab_inc_saved:
             if not recent_inc:
@@ -597,9 +600,15 @@ def render_income_tab():
                 opts = [f["name"] for f in recent_inc]
                 sel_inc = st.multiselect("בחרי קבצים", opts, key="inc_sel")
                 if st.button("📂 טעני נבחרים", key="inc_load") and sel_inc:
+                    loaded = []
                     for sname in sel_inc:
                         fb = dl_file("rahel_mor", "income", sname)
-                        if fb: income_files.append((sname, fb))
+                        if fb: loaded.append((sname, fb))
+                    if loaded:
+                        st.session_state[_inc_key] = loaded
+                        st.rerun()
+
+        income_files = st.session_state.get(_inc_key, [])
 
         if not income_files:
             st.info("⬆️ העלי קובץ אחד או יותר כדי להתחיל"); return
@@ -608,6 +617,11 @@ def render_income_tab():
             df = pd.read_excel(_io_inc.BytesIO(fb_inc), header=None)
             month_label = detect_month_label(fname_inc, df)
             st.success(f"✅ **{fname_inc}** | חודש: **{month_label}**")
+
+        if st.button("↩️ בחרי קבצים אחרים", key="inc_clear"):
+            st.session_state.pop(_inc_key, None)
+            st.session_state["income_processing"] = False
+            st.rerun()
 
         st.divider()
         if "income_processing" not in st.session_state:
@@ -622,8 +636,9 @@ def render_income_tab():
             all_unmatched, all_unknown_cols = [], []
 
             dfs = []
-            for fname_inc, fb_inc in income_files:
-                import io as _io_inc2
+            import io as _io_inc2
+            _inc_key2 = "_income_files_rahel"
+            for fname_inc, fb_inc in st.session_state.get(_inc_key2, income_files):
                 df = read_excel_safe(_io_inc2.BytesIO(fb_inc))
                 dfs.append((fname_inc, df))
 
