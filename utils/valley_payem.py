@@ -132,7 +132,7 @@ def build_valley_excel(data):
     _format_text_col(ws,7,2,ws.max_row)
     for col,w in zip("ABCDEFG",[12,42,14,14,28,12,12]):
         ws.column_dimensions[col].width=w
-    if data: _add_named_range(wb,"VALLEYTRANS","VALLEYTRANS",1,2,7,ws.max_row)
+    if data: _add_named_range(wb,"VALLEYTRANS","VALLEYTRANS",1,1,7,ws.max_row)
     # דף בנק
     ws2=wb.create_sheet(title="דף בנק")
     ws2.append(["תאריך","תאריך ערך","תיאור","חובה מטח","זכות מטח","יתרה"])
@@ -150,7 +150,7 @@ def build_valley_excel(data):
             if cell.value is not None: cell.number_format='#,##0.00'
     for col,w in zip("ABCDEF",[12,12,42,14,14,16]):
         ws2.column_dimensions[col].width=w
-    if data: _add_named_range(wb,"VALLEY_BANK","דף בנק",1,2,6,ws2.max_row)
+    if data: _add_named_range(wb,"VALLEY_BANK","דף בנק",1,1,6,ws2.max_row)
     total_debits=sum(t["amount"] for t in data if t.get("type_ind")=="DEBIT")
     total_credits=sum(t["amount"] for t in data if t.get("type_ind")!="DEBIT")
     total=sum(t["amount"] for t in data)
@@ -244,7 +244,7 @@ def _add_payem_sheet(wb,data,sheet_name,mode):
         nm={"PAYEMDATA":"PAYEMDATA","פקודה_INC":"PEKUDA_INC","רישום_LTD":"RISHUM_LTD","נגדית_לINC_של_LTD":"NEGDIT_LTD"}
         sn=sheet_name.replace(" ","_").replace('"','')
         rn=nm.get(sn,sn)
-        try: _add_named_range(wb,rn,sheet_name,1,2,tcols,ws.max_row)
+        try: _add_named_range(wb,rn,sheet_name,1,1,tcols,ws.max_row)
         except: pass
 
 def build_payem_excel(data):

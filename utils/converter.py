@@ -92,8 +92,8 @@ def convert_income_file(df: pd.DataFrame, clients_dict: dict, extra_columns: dic
         if not client_name or client_name in ("nan", "לקוח", ""):
             continue
 
-        _d = txn_date.date() if hasattr(txn_date, "date") else txn_date
-        txn_date_obj = f"{_d.day:02d}/{_d.month:02d}/{_d.year}"
+        txn_date_obj = txn_date.date() if hasattr(txn_date, "date") else txn_date
+        txn_date_str = f"{txn_date_obj.day:02d}/{txn_date_obj.month:02d}/{txn_date_obj.year}"
 
         account, ratio, matched_name = flexible_match(client_name, clients_dict)
         if account is None:
@@ -143,7 +143,7 @@ def convert_income_file(df: pd.DataFrame, clients_dict: dict, extra_columns: dic
                 row_income = round(row_income + diff, 2)
 
             invoice_rows.append([
-                txn_date_obj, account, credit_account, 9001,
+                txn_date_str, account, credit_account, 9001,
                 client_name, invoice_num,
                 row_total, row_income, col_vat,
             ])
@@ -157,7 +157,7 @@ def convert_income_file(df: pd.DataFrame, clients_dict: dict, extra_columns: dic
                 continue
             col_value = col_data[col_name]
             invoice_rows.append([
-                txn_date_obj, account, credit_account, 9001,
+                txn_date_str, account, credit_account, 9001,
                 client_name, invoice_num,
                 round(col_value, 2), round(col_value, 2), 0.0,
             ])
@@ -165,7 +165,7 @@ def convert_income_file(df: pd.DataFrame, clients_dict: dict, extra_columns: dic
         # ── קבלה ──
         if total > 0:
             receipt_rows.append([
-                txn_date_obj, 1200, account,
+                txn_date_str, 1200, account,
                 client_name, invoice_num,
                 total, total,
             ])
@@ -178,7 +178,7 @@ def convert_income_file(df: pd.DataFrame, clients_dict: dict, extra_columns: dic
             if not id_number and matched_name:
                 id_number = (clients_id or {}).get(matched_name, "")
             allocation_rows.append([
-                invoice_num, txn_date_obj, client_name,
+                invoice_num, txn_date_str, client_name,
                 id_number, net_taxable, "",
             ])
 

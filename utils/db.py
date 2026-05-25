@@ -149,7 +149,7 @@ def import_clients_from_df(df: pd.DataFrame) -> tuple:
         return 0, "לא נמצאו לקוחות — בדקי שהקובץ הוא אינדקס חשבונות מחשבשבת"
     try:
         sb.table("clients").delete().neq("account_number", 0).execute()
-        sb.table("clients").insert(clients).execute()
+        sb.table("clients").upsert(clients, on_conflict="name").execute()
         return len(clients), None
     except Exception as e:
         return 0, f"שגיאה: {str(e)}"

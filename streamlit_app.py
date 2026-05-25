@@ -608,6 +608,23 @@ def render_income_tab():
                     c2.metric("קבלות", len(receipt_rows))
                     c3.metric("חודש", month_label)
 
+                    # תצוגה מקדימה — חשבוניות
+                    st.subheader("תצוגה מקדימה — חשבוניות")
+                    if invoice_rows:
+                        import pandas as pd
+                        inv_df = pd.DataFrame(invoice_rows, columns=[
+                            "תאריך","ח.חובה","ח.זכות1","ח.זכות2",
+                            "פרטים","אסמכתא","סכום חובה","סכום זכות","מעמ"])
+                        st.dataframe(inv_df.head(20), use_container_width=True, hide_index=True)
+
+                    # תצוגה מקדימה — קבלות
+                    st.subheader("תצוגה מקדימה — קבלות")
+                    if receipt_rows:
+                        import pandas as pd
+                        rec_df = pd.DataFrame(receipt_rows, columns=[
+                            "תאריך","ח.חובה","ח.זכות","פרטים","אסמכתא","סכום בנק","סכום לקוח"])
+                        st.dataframe(rec_df.head(20), use_container_width=True, hide_index=True)
+
                     excel_data = create_excel_output(invoice_rows, receipt_rows, month_label)
                     st.download_button(
                         label=f"⬇️ הורד ייבוא — {month_label}",
