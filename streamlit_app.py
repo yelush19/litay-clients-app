@@ -108,38 +108,51 @@ def file_selector(client_id: str, file_type: str, label: str,
                   file_ext: list, key: str) -> tuple:
     """
     מציג אפשרות העלאה חדשה או בחירה מקבצים שמורים.
+    שומר bytes ב-session_state כך שישרוד reruns.
     מחזיר (file_bytes, filename) או (None, None)
     """
     from utils.db import upload_file, list_recent_files, download_file
 
-    recent = list_recent_files(client_id, file_type)
+    ss_key   = f"_fs_{key}_bytes"
+    ss_fname = f"_fs_{key}_fname"
 
+    # אם יש bytes שמורים מ-rerun קודם — החזר אותם
+    if st.session_state.get(ss_key):
+        # כפתור לניקוי
+        col_a, col_b = st.columns([5,1])
+        col_a.success(f"✅ טעון: {st.session_state.get(ss_fname, '')}")
+        if col_b.button("↩️", key=f"{key}_clear", help="טעון קובץ אחר"):
+            st.session_state.pop(ss_key, None)
+            st.session_state.pop(ss_fname, None)
+            st.rerun()
+        return st.session_state[ss_key], st.session_state.get(ss_fname, "")
+
+    recent = list_recent_files(client_id, file_type)
     tab_new, tab_recent = st.tabs(["📤 העלה חדש", f"📂 שמורים ({len(recent)})"])
 
     with tab_new:
         uploaded = st.file_uploader(label, type=file_ext, key=key)
         if uploaded:
             file_bytes = uploaded.read()
-            # שמור ל-Supabase Storage
-            path = upload_file(client_id, file_type, uploaded.name, file_bytes)
-            if path:
-                st.caption(f"✅ נשמר: {uploaded.name}")
-            return file_bytes, uploaded.name
+            upload_file(client_id, file_type, uploaded.name, file_bytes)
+            st.session_state[ss_key]   = file_bytes
+            st.session_state[ss_fname] = uploaded.name
+            st.rerun()
 
     with tab_recent:
         if not recent:
             st.info("אין קבצים שמורים עדיין")
-            return None, None
-        options = {f["name"]: f for f in recent}
-        selected = st.selectbox("בחרי קובץ", list(options.keys()), 
-                                 key=f"{key}_recent")
-        if st.button("📂 טעני קובץ זה", key=f"{key}_load", type="primary"):
-            file_bytes = download_file(client_id, file_type, selected)
-            if file_bytes:
-                st.success(f"✅ נטען: {selected}")
-                return file_bytes, selected
-            else:
-                st.error("שגיאה בטעינה")
+        else:
+            options  = {f["name"]: f for f in recent}
+            selected = st.selectbox("בחרי קובץ", list(options.keys()), key=f"{key}_recent")
+            if st.button("📂 טעני קובץ זה", key=f"{key}_load", type="primary"):
+                file_bytes = download_file(client_id, file_type, selected)
+                if file_bytes:
+                    st.session_state[ss_key]   = file_bytes
+                    st.session_state[ss_fname] = selected
+                    st.rerun()
+                else:
+                    st.error("שגיאה בטעינה")
 
     return None, None
 
@@ -215,12 +228,12 @@ def render_masav_tab(client):
                                     vendor_with_names[hp_i] = {"account": acc_i, "name": name_i}
                 except: pass
 
-        def save_mapping(hp_key, account_val):
-            """שמור מיפוי בודד מיד ל-Supabase"""
+        def _do_save(mappings: dict):
+            """פונקציית שמירה פנימית — שומרת dict של {hp: account} ל-Supabase"""
             fresh = st.session_state["clients"].get(client_id, client)
             raw = fresh.get("vendor_index") or {}
             vl  = {k.lstrip("0") or k: v for k, v in raw.items()}
-            updated = {**vl, hp_key: account_val}
+            updated = {**vl, **mappings}
             try:
                 get_litay_db().table("client_config") \
                     .update({"vendor_index": updated}) \
@@ -228,34 +241,62 @@ def render_masav_tab(client):
                 from utils.db import load_clients_litay
                 st.session_state["clients"] = load_clients_litay()
                 st.session_state.pop(f"masav_rows_{client_id}", None)
+                st.session_state[f"masav_rows_{client_id}_fresh"] = True
                 st.rerun()
             except Exception as e:
                 st.error(f"שגיאה: {e}")
+
+        def save_mapping(hp_key, account_val):
+            _do_save({hp_key: account_val})
+
+        def save_mapping_bulk(mappings: dict):
+            _do_save(mappings)
+
+        # ===== טבלת ספקים עם checkboxes =====
+        pending = {}  # {hp: account} — מה שמחכה לשמירה
 
         for item in unmatched:
             vendor_name = item["vendor"]
             hp          = item["hp"]
             amount      = item["amount"]
 
-            with st.container():
-                st.markdown(f"**{vendor_name}** | ח.פ: `{hp}` | סכום: ₪{amount:,.0f}")
+            sugg_name, sugg_acc, sugg_hp, ratio = fuzzy_match_vendor(
+                vendor_name, vendor_with_names
+            )
 
-                sugg_name, sugg_acc, sugg_hp, ratio = fuzzy_match_vendor(
-                    vendor_name, vendor_with_names
-                )
+            col_cb, col_info, col_acc = st.columns([0.5, 4, 2])
 
-                col1, col2, col3 = st.columns([3, 2, 1])
+            # ברירת מחדל: מסומן אם יש הצעה טובה
+            default_checked = bool(sugg_acc and ratio >= 0.75)
+            checked = col_cb.checkbox("", key=f"cb_{hp}", value=default_checked)
 
+            with col_info:
+                st.markdown(f"**{vendor_name}** | ח.פ: `{hp}` | ₪{amount:,.0f}")
                 if sugg_acc and ratio >= 0.7:
-                    col1.info(f"💡 **{sugg_name}** → ח\"ן {sugg_acc} ({ratio:.0%})")
-                    if col2.button(f"✅ כן, שמור", key=f"match_{hp}", type="primary"):
-                        save_mapping(hp, sugg_acc)
+                    st.caption(f"💡 {sugg_name} → {sugg_acc} ({ratio:.0%})")
 
-                with col3:
-                    manual_acc = st.text_input("ח\"ן ידני", key=f"manual_{hp}", placeholder="1298")
-                    if manual_acc.strip():
-                        if st.button("💾", key=f"save_{hp}"):
-                            save_mapping(hp, manual_acc.strip())
+            with col_acc:
+                # הצג ח"ן מוצע בתיבה — ניתן לעריכה
+                default_val = sugg_acc if (sugg_acc and ratio >= 0.7) else ""
+                acc_val = st.text_input("ח\"ן", key=f"acc_{hp}", 
+                                        value=default_val, placeholder="מספר חשבון")
+
+            if checked and acc_val.strip():
+                pending[hp] = acc_val.strip()
+
+        st.divider()
+        col_l, col_r = st.columns([3, 1])
+
+        with col_r:
+            if st.button("💾 שמור מסומנים", type="primary", 
+                         key="save_checked", disabled=not pending):
+                save_mapping_bulk(pending)
+
+        with col_l:
+            if pending:
+                st.caption(f"✅ {len(pending)} ספקים מסומנים לשמירה")
+            else:
+                st.caption("סמני ספקים והזיני ח\"ן לשמירה")
 
         # תמיד עצור כאן — לא מאפשר הורדה עם ספקים חסרים
         return
