@@ -1,5 +1,6 @@
 import streamlit as st
 import csv, io, hashlib
+from io import BytesIO as _BytesIO
 import pandas as pd
 from datetime import datetime
 
@@ -615,7 +616,7 @@ def render_income_tab():
             st.info("⬆️ העלי קובץ אחד או יותר כדי להתחיל"); return
 
         for fname_inc, fb_inc in income_files:
-            df = pd.read_excel(io.BytesIO(fb_inc), header=None)
+            df = pd.read_excel(_BytesIO(fb_inc), header=None)
             month_label = detect_month_label(fname_inc, df)
             st.success(f"✅ **{fname_inc}** | חודש: **{month_label}**")
 
@@ -638,7 +639,7 @@ def render_income_tab():
 
             dfs = []
             for fname_inc, fb_inc in income_files:
-                df = read_excel_safe(io.BytesIO(fb_inc))
+                df = read_excel_safe(_BytesIO(fb_inc))
                 dfs.append((fname_inc, df))
 
             for name, df in dfs:
@@ -904,7 +905,7 @@ def main():
 
             if idx_bytes_r:
                 try:
-                    df_idx = read_excel_safe(io.BytesIO(idx_bytes_r))
+                    df_idx = read_excel_safe(_BytesIO(idx_bytes_r))
                     count, err = import_clients_from_df(df_idx)
                     if err and count == 0: st.error(f"❌ {err}")
                     elif err: st.warning(f"⚠️ {err}")
