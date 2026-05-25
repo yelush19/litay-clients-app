@@ -82,14 +82,18 @@ def convert_income_file(df: pd.DataFrame, clients_dict: dict, extra_columns: dic
         fee         = _clean(row.iloc[6]) if len(row) > 6 else 0
         misc        = _clean(row.iloc[7]) if len(row) > 7 else 0
         client_name = str(row.iloc[9]).strip() if len(row) > 9 else ""
-        invoice_num = row.iloc[10] if len(row) > 10 else None
+        import re as _re
+        _inv_raw = row.iloc[10] if len(row) > 10 else None
+        invoice_num = _re.sub(r'[^0-9]', '', str(_inv_raw or ''))[:9] if _inv_raw is not None else ''
+
 
         if pd.isna(txn_date) or not hasattr(txn_date, "month"):
             continue
         if not client_name or client_name in ("nan", "לקוח", ""):
             continue
 
-        txn_date_obj = txn_date.date() if hasattr(txn_date, "date") else txn_date
+        _d = txn_date.date() if hasattr(txn_date, "date") else txn_date
+        txn_date_obj = f"{_d.day:02d}/{_d.month:02d}/{_d.year}"
 
         account, ratio, matched_name = flexible_match(client_name, clients_dict)
         if account is None:
@@ -175,7 +179,7 @@ def convert_income_file(df: pd.DataFrame, clients_dict: dict, extra_columns: dic
                 id_number = (clients_id or {}).get(matched_name, "")
             allocation_rows.append([
                 invoice_num, txn_date_obj, client_name,
-                id_number, net_taxable, "",  # מספר הקצאה ריק
+                id_number, net_taxable, "",
             ])
 
     return invoice_rows, receipt_rows, allocation_rows, unmatched, list(unknown_columns)
@@ -215,8 +219,8 @@ def _format_sheet(ws, headers, rows, col_widths, text_cols: set):
         for c_idx in range(1, len(headers) + 1):
             cell = ws.cell(row=r_idx, column=c_idx)
 
-            if c_idx == 1:                          # תאריך
-                cell.number_format = "DD/MM/YYYY"
+            if c_idx == 1:                          # תאריך — TEXT
+                cell.number_format = "@"
                 cell.alignment = Alignment(horizontal="center")
 
             elif c_idx in text_cols:               # חשבון / אסמכתא — TEXT
@@ -288,8 +292,10 @@ def create_allocation_report(allocation_rows: list) -> io.BytesIO:
     for r_idx in range(2, ws.max_row + 1):
         for c_idx in range(1, len(ALLOCATION_HEADERS) + 1):
             cell = ws.cell(row=r_idx, column=c_idx)
-            if c_idx == 2:
-                cell.number_format = "DD/MM/YYYY"
+            if c_idx == 2:                         # תאריך — TEXT
+                if hasattr(cell.value, 'strftime'):
+                    cell.value = f"{cell.value.day:02d}/{cell.value.month:02d}/{cell.value.year}"
+                cell.number_format = "@"
                 cell.alignment = Alignment(horizontal="center")
             elif c_idx == 5:
                 cell.number_format = "#,##0.00"
