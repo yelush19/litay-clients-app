@@ -136,11 +136,9 @@ def convert_income_file(df: pd.DataFrame, clients_dict: dict, extra_columns: dic
                 col_vat_cents = 0
 
             credit_account = KNOWN_COLUMNS.get(col_name, (extra_columns.get(col_name, {}).get("account"), None))[0]
-            row_total_cents  = col_value_cents + col_vat_cents
             row_income_cents = col_value_cents
-
-            # ── איזון מובטח: row_total = row_income + col_vat (חשבון cents) ──
-            assert row_total_cents == row_income_cents + col_vat_cents
+            # כפיית איזון מוחלט: row_total = row_income + col_vat (חישוב cents שלמים, ללא drift)
+            row_total_cents  = row_income_cents + col_vat_cents
 
             invoice_rows.append([
                 txn_date_str, account, credit_account, 9001,
