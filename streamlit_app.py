@@ -103,6 +103,46 @@ def workbook_to_bytes(wb):
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
     return buf.getvalue()
 
+
+def file_selector(client_id: str, file_type: str, label: str, 
+                  file_ext: list, key: str) -> tuple:
+    """
+    מציג אפשרות העלאה חדשה או בחירה מקבצים שמורים.
+    מחזיר (file_bytes, filename) או (None, None)
+    """
+    from utils.db import upload_file, list_recent_files, download_file
+
+    recent = list_recent_files(client_id, file_type)
+
+    tab_new, tab_recent = st.tabs(["📤 העלה חדש", f"📂 שמורים ({len(recent)})"])
+
+    with tab_new:
+        uploaded = st.file_uploader(label, type=file_ext, key=key)
+        if uploaded:
+            file_bytes = uploaded.read()
+            # שמור ל-Supabase Storage
+            path = upload_file(client_id, file_type, uploaded.name, file_bytes)
+            if path:
+                st.caption(f"✅ נשמר: {uploaded.name}")
+            return file_bytes, uploaded.name
+
+    with tab_recent:
+        if not recent:
+            st.info("אין קבצים שמורים עדיין")
+            return None, None
+        options = {f["name"]: f for f in recent}
+        selected = st.selectbox("בחרי קובץ", list(options.keys()), 
+                                 key=f"{key}_recent")
+        if st.button("📂 טעני קובץ זה", key=f"{key}_load", type="primary"):
+            file_bytes = download_file(client_id, file_type, selected)
+            if file_bytes:
+                st.success(f"✅ נטען: {selected}")
+                return file_bytes, selected
+            else:
+                st.error("שגיאה בטעינה")
+
+    return None, None
+
 # ===== TABS BY CLIENT =====
 
 def render_masav_tab(client):
@@ -121,13 +161,13 @@ def render_masav_tab(client):
         st.warning('⚠️ ח"ן בנק לא מוגדר'); return
 
     st.success(f"✅ {client['client_name']} | ח\"ן בנק: {bank_coa} | {len(vendor_lookup):,} ספקים")
-    mf = st.file_uploader("העלי קובץ MASAV (XLSX)", type=["xlsx"], key="masav_up")
-    if not mf: return
-
     st.markdown('<div style="text-align:center"><span class="badge badge-masav">🏦 MASAV</span></div>', unsafe_allow_html=True)
 
+    file_bytes, fname = file_selector(client_id, "masav", "העלי קובץ MASAV (XLSX)", ["xlsx"], "masav_up")
+    if not file_bytes: return
+
     with st.spinner("⏳ מעבד MASAV..."):
-        rows_data, batches, errors, unmatched = parse_masav(mf.read(), vendor_lookup, bank_coa)
+        rows_data, batches, errors, unmatched = parse_masav(file_bytes, vendor_lookup, bank_coa)
 
     if errors:
         with st.expander(f"⚠️ {len(errors)} שגיאות"):
@@ -218,11 +258,12 @@ def render_payit_tab():
     from utils.payit import extract_data_from_payit_pdf, create_mizrahi_excel
 
     st.markdown('<div style="text-align:center"><span class="badge badge-payit">💜 Pay-it → מזרחי</span></div>', unsafe_allow_html=True)
-    uploaded = st.file_uploader("📂 העלי קובץ PDF של Pay-it", type=['pdf'], key="payit_up")
-    if not uploaded: return
+    file_bytes, fname = file_selector("dmwa", "payit", "📂 העלי קובץ PDF של Pay-it", ["pdf"], "payit_up")
+    if not file_bytes: return
 
     with st.spinner("⏳ מעבד PDF..."):
-        data = extract_data_from_payit_pdf(uploaded)
+        import io as _io
+        data = extract_data_from_payit_pdf(_io.BytesIO(file_bytes))
 
     if not data:
         st.error("❌ לא נמצאו נתונים בקובץ"); return

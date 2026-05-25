@@ -163,3 +163,51 @@ def add_account_column(column_name: str, account_number: int, is_vat_exempt: boo
     sb = get_rahel_db()
     sb.table("account_columns").delete().eq("column_name", column_name).execute()
     sb.table("account_columns").insert({"column_name": column_name, "account_number": account_number, "is_vat_exempt": is_vat_exempt}).execute()
+
+
+# ===== SUPABASE STORAGE =====
+
+def upload_file(client_id: str, file_type: str, filename: str, file_bytes: bytes) -> str:
+    """מעלה קובץ ל-Supabase Storage. מחזיר path."""
+    import re
+    safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
+    path = f"{client_id}/{file_type}/{safe_name}"
+    try:
+        sb = get_litay_db()
+        # מחק קיים אם יש
+        sb.storage.from_("uploads").remove([path])
+    except:
+        pass
+    try:
+        sb = get_litay_db()
+        sb.storage.from_("uploads").upload(path, file_bytes)
+        return path
+    except Exception as e:
+        return ""
+
+
+def list_recent_files(client_id: str, file_type: str) -> list:
+    """מחזיר רשימת קבצים אחרונים עבור לקוח וסוג קובץ."""
+    prefix = f"{client_id}/{file_type}/"
+    try:
+        sb = get_litay_db()
+        files = sb.storage.from_("uploads").list(prefix.rstrip("/"))
+        return sorted(
+            [f for f in files if f.get("name")],
+            key=lambda x: x.get("updated_at", ""),
+            reverse=True
+        )[:10]
+    except:
+        return []
+
+
+def download_file(client_id: str, file_type: str, filename: str) -> bytes:
+    """מוריד קובץ מ-Supabase Storage."""
+    import re
+    safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
+    path = f"{client_id}/{file_type}/{safe_name}"
+    try:
+        sb = get_litay_db()
+        return sb.storage.from_("uploads").download(path)
+    except:
+        return b""
