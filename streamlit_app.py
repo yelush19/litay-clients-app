@@ -106,12 +106,12 @@ def workbook_to_bytes(wb):
 # ===== TABS BY CLIENT =====
 
 def render_masav_tab(client):
-    from utils.masav import parse_masav, build_masav_excel
-    from utils.db import check_duplicates_litay, save_keys_litay
+    from utils.masav import parse_masav, build_masav_excel, fuzzy_match_vendor
+    from utils.db import check_duplicates_litay, save_keys_litay, get_litay_db
 
     vendor_lookup = client.get("vendor_index") or {}
-    bank_coa = client.get("bank_coa", "")
-    client_id = client["client_id"]
+    bank_coa      = client.get("bank_coa", "")
+    client_id     = client["client_id"]
 
     if not vendor_lookup:
         st.warning("⚠️ אינדקס ספקים חסר"); return
@@ -133,16 +133,62 @@ def render_masav_tab(client):
     if not rows_data:
         st.error("לא נמצאו תנועות תקינות"); return
 
+    # ===== טיפול בספקים חסרים =====
+    if unmatched:
+        st.error(f"⚠️ {len(unmatched)} ספקים ללא ח\"ן — יש למלא לפני הורדה")
+
+        # בנה vendor index עם שמות לצורך fuzzy match
+        vendor_with_names = {
+            hp: {"account": acc, "name": ""}
+            for hp, acc in vendor_lookup.items()
+        }
+
+        new_mappings = {}
+
+        for item in unmatched:
+            vendor_name = item["vendor"]
+            hp          = item["hp"]
+            amount      = item["amount"]
+
+            with st.container():
+                st.markdown(f"**{vendor_name}** | ח.פ: `{hp}` | סכום: ₪{amount:,.0f}")
+
+                # fuzzy match מול האינדקס
+                sugg_name, sugg_acc, sugg_hp, ratio = fuzzy_match_vendor(
+                    vendor_name, vendor_with_names
+                )
+
+                col1, col2, col3 = st.columns([3, 2, 1])
+
+                if sugg_acc and ratio >= 0.7:
+                    col1.info(f"💡 אולי: **{sugg_name}** → ח\"ן {sugg_acc} ({ratio:.0%})")
+                    if col2.button(f"✅ כן, זה אותו ספק", key=f"match_{hp}"):
+                        new_mappings[hp] = sugg_acc
+
+                manual_acc = col3.text_input("ח\"ן ידני", key=f"manual_{hp}", placeholder="לדוגמה: 1298")
+                if manual_acc.strip():
+                    new_mappings[hp] = manual_acc.strip()
+
+        if new_mappings:
+            if st.button("💾 שמור מיפויים חדשים ועדכן", type="primary"):
+                # עדכן vendor_index ב-Supabase
+                updated_index = {**vendor_lookup, **new_mappings}
+                try:
+                    get_litay_db().table("client_config") \
+                        .update({"vendor_index": updated_index}) \
+                        .eq("client_id", client_id).execute()
+                    st.success(f"✅ נשמרו {len(new_mappings)} מיפויים חדשים!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"שגיאה: {e}")
+            return  # לא מאפשר הורדה עד שהכל מלא
+
+    # ===== תצוגה מקדימה =====
     c1,c2,c3,c4 = st.columns(4)
     c1.metric("תנועות", len(rows_data))
     c2.metric("סה״כ", f"₪{sum(r['amount'] for r in rows_data):,.0f}")
     c3.metric("Batches", len(batches))
-    no_coa = sum(1 for r in rows_data if not r['vendor_coa'])
-    c4.metric("⚠️ ללא ח\"ן" if no_coa else "✅ ח\"ן", no_coa if no_coa else f"{len(rows_data)}/{len(rows_data)}")
-
-    if unmatched:
-        with st.expander(f"⚠️ {len(unmatched)} ספקים ללא ח\"ן", expanded=True):
-            st.dataframe(pd.DataFrame(unmatched).rename(columns={'vendor':'ספק','hp':'ח.פ.','amount':'סכום','date':'תאריך'}), use_container_width=True, hide_index=True)
+    c4.metric("✅ ח\"ן", f"{len(rows_data)}/{len(rows_data)}")
 
     st.subheader("תצוגה מקדימה")
     prev = [{'תאריך':r['date_fmt'],'תיאור':r['vendor'],'סכום':r['amount'],
@@ -160,12 +206,11 @@ def render_masav_tab(client):
     cols = st.columns(3)
     cols[0].metric("תנועות", checks['total_rows'])
     cols[1].metric("סה״כ", f"₪{checks['total_amount']:,.2f}")
-    cols[2].metric(f"{'⚠️' if checks['no_coa'] else '✅'} ח\"ן", f"{checks['coa_covered']}/{checks['total_rows']}")
+    cols[2].metric("✅ ח\"ן", f"{checks['coa_covered']}/{checks['total_rows']}")
 
     st.download_button(f"📥 הורד MASAV Excel ({len(rows_data)} ספקים)",
         workbook_to_bytes(wb), fname,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
-
 
 def render_payit_tab():
     from utils.payit import extract_data_from_payit_pdf, create_mizrahi_excel
@@ -490,6 +535,62 @@ def main():
         if st.button("🔄 רענן", use_container_width=True):
             from utils.db import load_clients_litay
             st.session_state["clients"] = load_clients_litay(); st.rerun()
+
+        # ===== סרגל צד דינמי לפי לקוח =====
+        st.divider()
+
+        if selected_id == "dmwa":
+            # ── אינדקס ספקים ──
+            st.caption("📋 אינדקס ספקים (מחשבשבת)")
+            idx_file = st.file_uploader("העלי XLSX ספקים", type=["xlsx"], key="idx_vendors")
+            if idx_file:
+                from utils.masav import read_vendor_index_xlsx
+                with st.spinner("קורא..."):
+                    lookup, errs = read_vendor_index_xlsx(idx_file.read())
+                if errs:
+                    for e in errs: st.error(e)
+                elif lookup:
+                    existing = clients.get(selected_id, {}).get("vendor_index") or {}
+                    merged = {**existing, **lookup}
+                    try:
+                        from utils.db import get_litay_db
+                        get_litay_db().table("client_config") \
+                            .update({"vendor_index": merged}) \
+                            .eq("client_id", selected_id).execute()
+                        st.success(f"✅ {len(lookup):,} ספקים עודכנו!")
+                        from utils.db import load_clients_litay
+                        st.session_state["clients"] = load_clients_litay()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"שגיאה: {e}")
+
+        elif selected_id == "rahel_mor":
+            # ── אינדקס לקוחות ──
+            st.caption("👥 אינדקס לקוחות (מחשבשבת)")
+            idx_file = st.file_uploader("העלי XLSX לקוחות", type=["xlsx"], key="idx_clients")
+            if idx_file:
+                from utils.db import read_excel_safe, import_clients_from_df
+                try:
+                    df = read_excel_safe(idx_file)
+                    count, err = import_clients_from_df(df)
+                    if err and count == 0: st.error(f"❌ {err}")
+                    elif err: st.warning(f"⚠️ {err}")
+                    else: st.success(f"✅ {count} לקוחות יובאו!")
+                except Exception as e:
+                    st.error(f"שגיאה: {e}")
+
+        elif selected_id == "brandlight":
+            # ── ח"ן JSON ──
+            st.caption("📊 ייבוא ח\"ן (JSON)")
+            coa_file = st.file_uploader("העלי coa_lookup.json", type=["json"], key="coa_json")
+            if coa_file:
+                try:
+                    import json
+                    coa_data = json.loads(coa_file.read().decode("utf-8"))
+                    st.session_state["coa"] = coa_data
+                    st.success("✅ ח\"ן עודכן!")
+                except Exception as e:
+                    st.error(f"שגיאה: {e}")
 
     # טאבים לפי לקוח
     modules = CLIENT_MODULES.get(selected_id, [])

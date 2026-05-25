@@ -111,3 +111,111 @@ def build_masav_excel(rows,batches):
     no_coa=sum(1 for r in rows if not r['vendor_coa'])
     return wb,{'total_rows':len(rows),'total_amount':total,
                'no_coa':no_coa,'coa_covered':len(rows)-no_coa}
+
+# ===== FUZZY MATCH VENDORS =====
+from difflib import SequenceMatcher
+
+def fuzzy_match_vendor(masav_name: str, vendor_index: dict) -> tuple:
+    """
+    מנסה למצוא שם דומה מאינדקס הספקים לפי שם (לא ח.פ.)
+    מחזיר (שם_מוצע, ח"ן, ratio) או (None, None, 0)
+    vendor_index: {ח.פ. → {name: שם, account: ח"ן}}
+    """
+    name_lower = masav_name.lower().strip()
+    name_words = name_lower.split()
+    
+    best_name    = None
+    best_account = None
+    best_hp      = None
+    best_ratio   = 0
+
+    for hp, data in vendor_index.items():
+        if not isinstance(data, dict):
+            continue
+        candidate = str(data.get("name", "")).lower().strip()
+        if not candidate:
+            continue
+
+        # כל המילים של השם הקצר מופיעות בשם הארוך
+        if len(name_words) >= 2 and all(w in candidate for w in name_words):
+            ratio = 0.9
+        elif len(name_words) >= 2 and all(w in name_lower for w in candidate.split()):
+            ratio = 0.85
+        else:
+            ratio = SequenceMatcher(None, name_lower, candidate).ratio()
+
+        if ratio >= 0.7 and ratio > best_ratio:
+            best_ratio   = ratio
+            best_name    = data.get("name")
+            best_account = data.get("account")
+            best_hp      = hp
+
+    return best_name, best_account, best_hp, best_ratio
+
+
+def build_vendor_index_with_names(vendor_index_raw: dict, coa_lookup: dict) -> dict:
+    """
+    ממיר vendor_index פשוט {ח.פ. → ח"ן} ל-{ח.פ. → {name, account}}
+    coa_lookup: מ-Supabase, כולל שמות אם יש
+    """
+    result = {}
+    for hp, value in vendor_index_raw.items():
+        if isinstance(value, dict):
+            result[hp] = value
+        else:
+            # פורמט ישן {ח.פ. → ח"ן}
+            result[hp] = {"account": str(value), "name": ""}
+    return result
+
+
+def read_vendor_index_xlsx(file_bytes: bytes) -> tuple:
+    """
+    קורא אינדקס ספקים מחשבשבת (XLSX).
+    מחזיר ({ח.פ. → ח"ן}, errors)
+    קריאה דרך zipfile/XML כדי להתמודד עם borderID
+    """
+    lookup = {}
+    errors = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+            shared = []
+            if 'xl/sharedStrings.xml' in z.namelist():
+                ns = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+                for si in ET.parse(z.open('xl/sharedStrings.xml')).getroot():
+                    parts = si.findall(f'.//{ns}t')
+                    shared.append(''.join(p.text or '' for p in parts))
+
+            sheet_name = next(
+                (n for n in z.namelist() if 'worksheets/sheet' in n and n.endswith('.xml')),
+                None
+            )
+            if not sheet_name:
+                errors.append("לא נמצא גיליון בקובץ")
+                return lookup, errors
+
+            sheet = ET.parse(z.open(sheet_name))
+            ns = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+
+            for row in sheet.getroot().findall(f'.//{ns}row'):
+                cells = {}
+                for c in row.findall(f'{ns}c'):
+                    ref = c.get('r', '')
+                    col = ''.join(filter(str.isalpha, ref))
+                    t   = c.get('t', '')
+                    v   = c.find(f'{ns}v')
+                    val = v.text if v is not None else ''
+                    if t == 's' and val:
+                        val = shared[int(val)]
+                    cells[col] = val
+
+                # E=קוד מיון(300), F=מפתח חשבון, I=ח.פ.
+                if cells.get('E') == '300' and cells.get('F') and cells.get('F') not in ('', '300', 'מפתח חשבון'):
+                    hp      = cells.get('I', '').strip()
+                    account = cells.get('F', '').strip()
+                    if hp and hp not in ('0', '', '999999999') and account:
+                        lookup[hp] = account
+
+    except Exception as e:
+        errors.append(f"שגיאה בקריאת אינדקס: {e}")
+
+    return lookup, errors
